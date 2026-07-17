@@ -6,10 +6,55 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Distribution Artifacts
+  verify-ci:
+    name: Verify CI Passed
     runs-on: ubuntu-latest
     steps:
+      - name: Check CI status for commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ github.sha }}"
+          echo "Checking CI status for commit: $SHA"
+          
+          # Poll for up to 10 minutes (20 iterations * 30 seconds)
+          for i in {1..20}; do
+            RUNS=$(gh run list --commit "$SHA" --workflow "CI" --json conclusion,status,databaseId)
+            
+            if [ "$RUNS" = "[]" ] || [ -z "$RUNS" ]; then
+              echo "No CI runs found for this commit yet. Waiting 30s..."
+              sleep 30
+              continue
+            fi
+            
+            STATUS=$(echo "$RUNS" | jq -r '.[0].status')
+            CONCLUSION=$(echo "$RUNS" | jq -r '.[0].conclusion')
+            
+            echo "CI run status: $STATUS, conclusion: $CONCLUSION"
+            
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "CI completed successfully!"
+                exit 0
+              else
+                echo "CI completed but failed: $CONCLUSION"
+                exit 1
+              fi
+            fi
+            
+            echo "CI is still in progress ($STATUS). Waiting 30 seconds..."
+            sleep 30
+          done
+          
+          echo "Timed out waiting for CI workflow to complete."
+          exit 1
+
+  build:
+    name: Build Distribution Artifacts
+    needs: verify-ci
+    runs-on: ubuntu-latest
+    steps:
+
       - name: Checkout Code
         uses: actions/checkout@v7
         with:
