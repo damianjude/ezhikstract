@@ -8,14 +8,14 @@ Each of these data points have an offset each, and are stored in 64-bit and 32-b
 
 `index01.bin` is just a copy of `index00.bin`, probably for redundancy.
 
-`index00.bin` also contains the data about the segments of the `hivxxxxx.mp4` videos. Those videos aren't actually stored in the normal format of an `.mp4` container. All of those `.mp4` files are 268.4 MB. Same as the `.bin` files. In fact, all files in the SD Card are the same size, since they are moving pre-allocated buffers, and not a normal video or photo file(s). The video files have an MPEG-PS stream containing HEVC as the video codec, and a .mp2 file as the audio codec. The videos are stored as segments inside that .mp4 files:
+`index00.bin` also contains the data about the segments of the `hivxxxxx.mp4` videos. Those videos aren't actually stored in the normal format of an `.mp4` container. All of those `.mp4` files are 268.4 MB. Same as the `.bin` files. In fact, all files in the SD Card are the same size, since they are moving pre-allocated buffers, and not a normal video or photo file(s). The video files have an MPEG-PS stream containing HEVC as the video codec, and a .AAC as the audio codec. The videos are stored as segments inside that .mp4 files:
 
 
 .mp4
 ________________________________________________________
 |_______________________  _______________________       |
 ||                     |  |                     |       |    
-||MPEG-PS (HEVC + mp2) |  |MPEG-PS (HEVC + mp2) | ......|
+||MPEG-PS (HEVC + AAC) |  |MPEG-PS (HEVC + AAC) | ......|
 ||                     |  |                     |       |
 |-----------------------  -----------------------       |
 |_______________________________________________________|
