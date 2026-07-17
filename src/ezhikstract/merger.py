@@ -32,7 +32,9 @@ def merge_day(
         try:
             output_path.unlink()
         except OSError as error:
-            print(f"Error: Failed to delete existing output file {output_path}: {error}")
+            print(
+                f"Error: Failed to delete existing output file {output_path}: {error}"
+            )
             return None
 
     # Escape single quotes to prevent syntax errors in the ffmpeg concat file
@@ -55,10 +57,16 @@ def merge_day(
     # Stream-copy concatenate segment files without re-encoding
     cmd = [
         imageio_ffmpeg.get_ffmpeg_exe(),
-        "-f", "concat", "-safe", "0",
-        "-i", str(concat_list),
-        "-c", "copy",
-        "-y", str(output_path),
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_list),
+        "-c",
+        "copy",
+        "-y",
+        str(output_path),
     ]
 
     try:

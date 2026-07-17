@@ -52,7 +52,8 @@ def extract(
     output_dir: Annotated[
         Path,
         typer.Option(
-            "--output", "-o",
+            "--output",
+            "-o",
             help='Output directory for extracted and merged .mp4 files. Default: "./recordings".',
         ),
     ] = Path("./recordings"),

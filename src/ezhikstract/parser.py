@@ -2,16 +2,17 @@ from dataclasses import dataclass
 
 # Index file layout
 HEADER_BUFFER_LENGTH: int = 1280
-FILE_RECORD_LENGTH: int = 32       # bytes per av-file record in the header area
-SEGMENT_RECORD_LENGTH: int = 80    # bytes per segment record
+FILE_RECORD_LENGTH: int = 32  # bytes per av-file record in the header area
+SEGMENT_RECORD_LENGTH: int = 80  # bytes per segment record
 MAX_SEGMENTS_PER_SOURCE_FILE: int = 256
+
 
 @dataclass
 class IndexHeader:
-    modify_counter: int   # number of times video segments have been modified
-    index_version: int    # 2 or 3
-    av_files: int         # total number of hivXXXXX.mp4 files on the SD card
-    next_file_no: int     # xxxxx of the next hivXXXXX.mp4 to be written
+    modify_counter: int  # number of times video segments have been modified
+    index_version: int  # 2 or 3
+    av_files: int  # total number of hivXXXXX.mp4 files on the SD card
+    next_file_no: int  # xxxxx of the next hivXXXXX.mp4 to be written
     last_file_no: int
     cur_file_info: bytes  # see docs/FORMAT.md
     unknown: bytes
@@ -23,19 +24,28 @@ class Segment:
     start_time_raw: int
     end_time_raw: int
     start_offset: int
-    end_offset: int       # byte offset of segment end inside hivXXXXX.mp4
+    end_offset: int  # byte offset of segment end inside hivXXXXX.mp4
+
 
 def parse_index_header(data: bytes) -> IndexHeader:
     """Parse the first HEADER_BUFFER_LENGTH bytes of an index file."""
     off = 0
-    modify_counter = int.from_bytes(data[off : off + 8], "little"); off += 8
-    index_version  = int.from_bytes(data[off : off + 4], "little"); off += 4
-    av_files       = int.from_bytes(data[off : off + 4], "little"); off += 4
-    next_file_no   = int.from_bytes(data[off : off + 4], "little"); off += 4
-    last_file_no   = int.from_bytes(data[off : off + 4], "little"); off += 4
-    cur_file_info  = data[off : off + 1176];  off += 1176
-    unknown        = data[off : off + 76];    off += 76
-    checksum       = int.from_bytes(data[off : off + 4], "little"); off += 4
+    modify_counter = int.from_bytes(data[off : off + 8], "little")
+    off += 8
+    index_version = int.from_bytes(data[off : off + 4], "little")
+    off += 4
+    av_files = int.from_bytes(data[off : off + 4], "little")
+    off += 4
+    next_file_no = int.from_bytes(data[off : off + 4], "little")
+    off += 4
+    last_file_no = int.from_bytes(data[off : off + 4], "little")
+    off += 4
+    cur_file_info = data[off : off + 1176]
+    off += 1176
+    unknown = data[off : off + 76]
+    off += 76
+    checksum = int.from_bytes(data[off : off + 4], "little")
+    off += 4
 
     return IndexHeader(
         modify_counter=modify_counter,
@@ -56,14 +66,18 @@ def parse_segment(data: bytes) -> Segment:
     # segmentType + status + reservedA + resolution (8 bytes — unused)
     off += 8
 
-    start_time_raw = int.from_bytes(data[off : off + 8], "little"); off += 8
-    end_time_raw   = int.from_bytes(data[off : off + 8], "little"); off += 8
+    start_time_raw = int.from_bytes(data[off : off + 8], "little")
+    off += 8
+    end_time_raw = int.from_bytes(data[off : off + 8], "little")
+    off += 8
 
     # firstKeyFrameAbsTime + firstKeyFrameStdTime + lastFrameStdTime (16 bytes — unused)
     off += 16
 
-    start_offset = int.from_bytes(data[off : off + 4], "little"); off += 4
-    end_offset   = int.from_bytes(data[off : off + 4], "little"); off += 4
+    start_offset = int.from_bytes(data[off : off + 4], "little")
+    off += 4
+    end_offset = int.from_bytes(data[off : off + 4], "little")
+    off += 4
 
     # reservedB + infoCount + infoTypes + infoStartTime + infoEndTime +
     # infoStartOffset + infoEndOffset (28 bytes — unused)
