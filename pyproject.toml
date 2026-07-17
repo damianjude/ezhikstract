@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ezhikstract"
-description = "CLI to extract playable video from EZVIZ/Hikvision SD cards' proprietary round-robin storage format"
+description = "CLI to extract playable video from EZVIZ/Hikvision SD cards' proprietary round-robin storage format. Works specifically for devices that use hiv<xxxxx>.mp4 and index00.bin files."
 readme = "README.md"
 license = "Apache-2.0"
 
@@ -29,11 +29,19 @@ keywords = [
 
 classifiers = [
   "Development Status :: 3 - Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Topic :: Multimedia :: Video :: Conversion",
 ]
 
 dynamic = ["version"]
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
   "imageio-ffmpeg>=0.6.0",
   "typer>=0.27.0",
