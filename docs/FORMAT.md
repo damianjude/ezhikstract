@@ -24,4 +24,4 @@ It is possible that those segments inside may be overwritten due to the storage 
 
 There are also another files called `index00p.bin` and `hiv00000.pic` which contain the pictures that are sent to your phone, if you use the EZVIZ app (or Hikvision), regarding human or motion detection. However, reversing that would be for another day.
 
-The checksum in the file isn't standard CRC32. 
+The checksum in the file isn't standard CRC32.
