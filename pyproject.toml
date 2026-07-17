@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ezhikstract"
+dynamic = ["version"]
+
+[tool.hatch.version]
+source = "vcs"
+
+requires-python = ">=3.10"
+
+authors = [
+  {name = "damianjude", email = "52243518+damianjude@users.noreply.github.com"}
+]
+
+maintainers = [
+  {name = "damianjude", email = "52243518+damianjude@users.noreply.github.com"}
+]
+
+description = "CLI to extract playable video from EZVIZ/Hikvision SD cards' proprietary round-robin storage format"
+readme = "README.md"
+license = "Apache-2.0"
+
+keywords = ["audio", "cli", "video", "camera", "cctv", "cctv-cameras", "extractor", "extract", "card", "doorbell", "sdcard", "hikvision", "sd", "ezviz", "hikvision-camera", "ezvizhp7"]
+
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3.10"
+]
+
+[project.urls]
+Homepage = "https://github.com/damianjude/ezhikstract"
+Documentation = "https://github.com/damianjude/ezhikstract/blob/main/README.md"
+Repository = "https://github.com/damianjude/ezhikstract"
+"Issues" = "https://github.com/damianjude/ezhikstract/issues"
