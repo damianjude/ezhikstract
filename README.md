@@ -8,7 +8,7 @@ No full video re-encoding is performed; video streams (HEVC) are copied directly
 
 ## Installation
 
-Install the package directly from the repository directory:
+Ensure you have Python 3.10 or higher installed. You can install the package directly:
 
 ```bash
 pip install ezhikstract
@@ -16,42 +16,62 @@ pip install ezhikstract
 
 ## Usage
 
-The CLI provides two main commands: `list` and `extract`.
+The CLI provides two primary command groups: `list` and `extract`. Both groups support operations on either `videos` or `pictures`.
 
-### Command: `list`
+### 1. The `list` Command Group
 
-Lists all valid recordings found on the SD card without extracting them.
+Used to inspect valid records on the SD card without extracting any files.
 
-#### Usage
-
-```bash
-ezhikstract list INPUT_DIR
-```
-
-#### Arguments
-
-* `INPUT_DIR` (Required): Root directory of the SD card containing `index00.bin`.
-
-### Command: `extract`
-
-Extracts recording segments from the SD card, filters them by date/time if specified, and merges segments from the same day into a single file named by start time (`DDMMYYYY HHMMSS.mp4`).
-
-#### Usage
+#### Videos
+Lists all valid video segments detected on the SD card.
 
 ```bash
-ezhikstract extract INPUT_DIR [OPTIONS]
+ezhikstract list videos INPUT_DIR
 ```
+* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00.bin` file.
 
-#### Arguments
+#### Pictures
+Lists all valid picture/thumbnail records detected on the SD card.
 
-* `INPUT_DIR` (Required): Root directory of the SD card containing `index00.bin`.
+```bash
+ezhikstract list pictures INPUT_DIR
+```
+* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00p.bin` file.
 
-#### Options
+---
 
-* `-o, --output PATH`: Output directory for the extracted and merged `.mp4` files. Default is `recordings`.
-* `--from DATETIME`: Inclusive start filter, UTC (format: `YYYY-MM-DD HH:MM:SS`).
-* `--to DATETIME`: Exclusive end filter, UTC (format: `YYYY-MM-DD HH:MM:SS`).
-* `--replace / --no-replace`: Whether to overwrite existing files in the output directory. Default is `--replace`.
+### 2. The `extract` Command Group
+
+Used to retrieve and process records from the SD card.
+
+#### Videos
+Extracts raw video segments from the container files, filters them by timestamp if requested, remuxes/transcodes them into standard `.mp4` containers, and merges segments from the same calendar day into a single daily file.
+
+```bash
+ezhikstract extract videos INPUT_DIR [OPTIONS]
+```
+* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00.bin` file.
+
+**Options:**
+* `-o, --output PATH`: The output directory for the daily merged `.mp4` files. Default is `./recordings`.
+* `--from DATETIME`: Start time filter (inclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--to DATETIME`: End time filter (exclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--replace / --no-replace`: Overwrite existing files in the output directory. Default is `--replace`.
+
+#### Pictures
+Extracts raw snapshot thumbnails from the picture container files, filters them by timestamp if requested, and writes them out as standard JPEG (`.jpg`) files.
+
+```bash
+ezhikstract extract pictures INPUT_DIR [OPTIONS]
+```
+* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00p.bin` file.
+
+**Options:**
+* `-o, --output PATH`: The output directory for the extracted `.jpg` files. Default is `./pictures`.
+* `--from DATETIME`: Start time filter (inclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--to DATETIME`: End time filter (exclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--replace / --no-replace`: Overwrite existing files in the output directory. Default is `--replace`.
+
 
 ## How it Works
 
