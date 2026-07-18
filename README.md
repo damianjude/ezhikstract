@@ -61,6 +61,24 @@ The SD cards of these cameras use a pre-allocated round-robin storage file forma
 3. Within the `hivxxxxx.mp4` files, the videos are stored as raw MPEG-PS streams (MPEG Program Stream with HEVC video and G.711/PCM audio).
 4. `ezhikstract` parses `index00.bin`, verifies the boundaries and starts of the segments inside `hivxxxxx.mp4` (checking for valid MPEG-PS headers), extracts the segments, groups them by day, stream-copies the HEVC video tracks, re-encodes the audio to Opus, and concats the daily segments using the FFmpeg concat demuxer.
 
+## Architecture and Design Decisions
+
+The repository is built around several design choices to maintain clean separation, high performance, and robustness:
+
+### 1. Stream-Piped Concurrency
+* **Piped I/O**: Rather than reading massive 268MB files into memory or writing huge intermediate raw stream dumps to disk, segments are read in small chunks and piped directly to the standard input of the `ffmpeg` subprocess.
+* **Bounded Multithreading**: Uses a `ThreadPoolExecutor` to process segments in parallel. Concurrency limits are tuned to avoid high disk latency (limited to 4 workers for videos and 8 for pictures).
+
+### 2. Lossless Remuxing & Transcoding
+* **Video Quality**: Video streams (HEVC) are copied directly (`-c:v copy`) using the `-tag:v hvc1` format to ensure native, lossless rendering on iOS and macOS players.
+* **Audio Compatibility**: PCM G.711 / Alaw audio tracks are transcoded on the fly to Opus (`-c:a libopus`), resolving compatibility issues without modifying the underlying video track.
+* **Concat Demuxer**: Uses the FFmpeg concat demuxer (`-f concat`) to combine chronological daily segments into a single file. This is a stream-copy operation, meaning no full decode-encode passes are executed.
+
+### 3. Integrity and Validation
+* **MPEG-PS Validation**: Checks the first 2KB of each raw sector boundary for MPEG Program Stream Pack Start (`0x000001BA`) and System Header (`0x000001BB`) markers. Any sectors corrupt from sudden power loss or circular buffer overwrites are ignored.
+* **JPEG Verification**: Validates the Start of Image (SOI) magic bytes (`0xFF 0xD8 0xFF`) for all picture/thumbnail files before parsing.
+* **Range Checks**: Automatically discards records with inverted offsets/timestamps, or segments belonging to missing video containers.
+
 ## Storage Format
 
 The security camera SD cards (typically EZVIZ / Hikvision) use a pre-allocated, round-robin storage format. All files (`index00.bin`, `index01.bin`, and the video files `hivxxxxx.mp4`) are pre-allocated to the exact same size of 268.4 MB (281,444,352 bytes). The same pre-allocation strategy applies to the mobile app thumbnails (`index00p.bin` and `hivxxxxx.pic`).
