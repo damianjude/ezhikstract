@@ -396,7 +396,9 @@ def extract_all_segments(
 
                 # Ensure extracted segments are sorted chronologically by their start_dt
                 extracted = [
-                    extracted_map[id(seg)] for seg in day_segs if id(seg) in extracted_map
+                    extracted_map[id(seg)]
+                    for seg in day_segs
+                    if id(seg) in extracted_map
                 ]
 
                 if extracted:
