@@ -38,9 +38,9 @@ def merge_day(
             return None
 
     # Escape single quotes to prevent syntax errors in the ffmpeg concat file
-    lines = []
+    lines: list[str] = []
     for f in segment_files:
-        escaped_path = str(f.resolve()).replace("'", "'\\''")
+        escaped_path = f.resolve().as_posix().replace("'", "'\\''")
         lines.append(f"file '{escaped_path}'")
 
     # Create temporary concat instruction file for ffmpeg
@@ -76,6 +76,13 @@ def merge_day(
             pass
         print(f"Merged → {output_path.name}")
         return output_path
+    except subprocess.CalledProcessError as error:
+        print(f"Merge failed with exit code {error.returncode}.")
+        if error.stderr:
+            print(f"ffmpeg stderr:\n{error.stderr}")
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+        return None
     except (subprocess.SubprocessError, OSError) as error:
         print(f"Merge failed: {error}")
         if output_path.exists():

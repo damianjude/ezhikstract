@@ -28,22 +28,22 @@ jobs:
               continue
             fi
             
-            STATUS=$(echo "$RUNS" | jq -r '.[0].status')
-            CONCLUSION=$(echo "$RUNS" | jq -r '.[0].conclusion')
-            
-            echo "CI run status: $STATUS, conclusion: $CONCLUSION"
-            
-            if [ "$STATUS" = "completed" ]; then
-              if [ "$CONCLUSION" = "success" ]; then
-                echo "CI completed successfully!"
-                exit 0
-              else
-                echo "CI completed but failed: $CONCLUSION"
-                exit 1
-              fi
+            # Check if ANY run for this commit has succeeded
+            SUCCESSFUL_RUN=$(echo "$RUNS" | jq -r '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId' | head -n 1)
+            if [ -n "$SUCCESSFUL_RUN" ]; then
+              echo "CI has already passed successfully (Run ID: $SUCCESSFUL_RUN)!"
+              exit 0
+            fi
+
+            # Check if there are any runs still in progress
+            IN_PROGRESS_RUNS=$(echo "$RUNS" | jq -r '.[] | select(.status != "completed") | .databaseId' | head -n 1)
+            if [ -z "$IN_PROGRESS_RUNS" ]; then
+              # No runs are in progress, and none succeeded, so all completed runs must have failed
+              echo "All CI runs for this commit have completed and failed."
+              exit 1
             fi
             
-            echo "CI is still in progress ($STATUS). Waiting 30 seconds..."
+            echo "CI is still in progress. Waiting 30 seconds..."
             sleep 30
           done
           

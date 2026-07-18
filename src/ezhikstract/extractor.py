@@ -38,7 +38,7 @@ def _is_valid_mpeg_ps(path: Path, offset: int) -> bool:
         with open(path, "rb") as fh:
             fh.seek(offset)
             buffer = fh.read(2048)
-    except OSError:
+    except (OSError, ValueError):
         return False
 
     if len(buffer) < 5:
@@ -226,6 +226,19 @@ def extract_segment(
             # We skip printing ffmpeg log messages unless there is a crash/error
             pass
         return mp4_file
+    except subprocess.CalledProcessError as error:
+        print(
+            f"ffmpeg failed on segment {segment.start_dt} with exit code {error.returncode}.",
+            file=sys.stderr,
+        )
+        if error.stderr:
+            print(f"ffmpeg stderr:\n{error.stderr}", file=sys.stderr)
+        if mp4_file.exists():
+            try:
+                mp4_file.unlink()
+            except OSError:
+                pass
+        return None
     except (subprocess.SubprocessError, OSError) as error:
         print(f"ffmpeg failed on segment {segment.start_dt}: {error}", file=sys.stderr)
         if mp4_file.exists():
@@ -332,5 +345,190 @@ def log_available_recordings(segments: list[RecordingSegment]) -> None:
         end = seg.end_dt.strftime("%Y-%m-%d %H:%M:%S")
         print(
             f"{i:>4}  {seg.source_file_name}  {start} → {end}  "
+            f"({seg.raw.start_offset:09d} – {seg.raw.end_offset:09d})"
+        )
+
+
+def process_picture_segments(
+    camera_dir: Path,
+) -> tuple[IndexHeader, list[RecordingSegment]]:
+    """
+    Parse index00p.bin, validate each segment against its source file, and return a time-sorted list of valid RecordingSegments for pictures.
+    """
+    from .parser import load_picture_index
+
+    index_path = camera_dir / "index00p.bin"
+    # Attempt to load and parse the binary index file
+    try:
+        header, raw_segments = load_picture_index(str(index_path))
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Index file index00p.bin not found in '{camera_dir}'.")
+    except OSError as error:
+        raise OSError(f"Failed to read index file '{index_path}': {error}")
+
+    segments: list[RecordingSegment] = []
+    skipped = 0
+    warned_missing: set[str] = set()
+
+    for source_file_index, seg in raw_segments:
+        # Filter out corrupted records with inverted offsets or start/end times
+        if seg.start_offset >= seg.end_offset or (seg.start_time_raw & _DATE_MASK) > (
+            seg.end_time_raw & _DATE_MASK
+        ):
+            skipped += 1
+            continue
+
+        source_name = f"hiv{source_file_index:05d}.pic"
+        source_path = camera_dir / source_name
+
+        if not source_path.exists():
+            if source_name not in warned_missing:
+                print(
+                    f"Warning: Source file '{source_name}' does not exist. Skipping its segments.",
+                    file=sys.stderr,
+                )
+                warned_missing.add(source_name)
+            skipped += 1
+            continue
+
+        try:
+            if seg.end_offset > source_path.stat().st_size:
+                skipped += 1
+                continue
+        except (OSError, ValueError):
+            skipped += 1
+            continue
+
+        try:
+            with open(source_path, "rb") as fh:
+                fh.seek(seg.start_offset)
+                magic = fh.read(3)
+                if magic != b"\xff\xd8\xff":
+                    skipped += 1
+                    continue
+        except (OSError, ValueError):
+            skipped += 1
+            continue
+
+        segments.append(
+            RecordingSegment(
+                raw=seg,
+                start_dt=datetime.fromtimestamp(
+                    seg.start_time_raw & _DATE_MASK, tz=timezone.utc
+                ),
+                end_dt=datetime.fromtimestamp(
+                    seg.end_time_raw & _DATE_MASK, tz=timezone.utc
+                ),
+                source_file_index=source_file_index,
+                source_file_segment_index=0,
+                source_file_name=source_name,
+            )
+        )
+
+    segments.sort(key=lambda s: s.start_dt)  # sort by datetime
+
+    summary = f"Found {len(segments)} pictures"
+    if skipped:
+        summary += f", skipped {skipped} invalid"
+    print(summary)
+
+    return header, segments
+
+
+def extract_picture_segment(
+    segment: RecordingSegment,
+    camera_dir: Path,
+    output_dir: Path,
+    *,
+    replace: bool = True,
+) -> Path | None:
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print(
+            f"Error: Failed to create output directory {output_dir}: {error}",
+            file=sys.stderr,
+        )
+        return None
+
+    start_str = segment.start_dt.strftime("%d%m%Y %H%M%S")
+    stem = f"{start_str} ({segment.source_file_index:05d}-{segment.raw.start_offset})"
+    jpg_file = output_dir / f"{stem}.jpg"
+
+    if jpg_file.exists() and not replace:
+        return jpg_file
+
+    try:
+        with open(camera_dir / segment.source_file_name, "rb") as fh:
+            fh.seek(segment.raw.start_offset)
+            raw = fh.read(segment.raw.end_offset - segment.raw.start_offset)
+        jpg_file.write_bytes(raw)
+        return jpg_file
+    except OSError as error:
+        print(
+            f"Error: Failed to extract picture {segment.start_dt}: {error}",
+            file=sys.stderr,
+        )
+        return None
+
+
+def extract_all_pictures(
+    segments: list[RecordingSegment],
+    camera_dir: Path,
+    *,
+    from_time: str | None = None,
+    to_time: str | None = None,
+    output_dir: Path = Path("extracted"),
+    replace: bool = True,
+) -> None:
+    to_process = segments
+    if from_time or to_time:
+        fmt = "%Y-%m-%d %H:%M:%S"
+        try:
+            start_dt = (
+                datetime.strptime(from_time, fmt).replace(tzinfo=timezone.utc)
+                if from_time
+                else None
+            )
+        except ValueError:
+            raise ValueError(
+                f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
+            )
+        try:
+            end_dt = (
+                datetime.strptime(to_time, fmt).replace(tzinfo=timezone.utc)
+                if to_time
+                else None
+            )
+        except ValueError:
+            raise ValueError(
+                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
+            )
+
+        to_process = [
+            s
+            for s in segments
+            if (start_dt is None or s.start_dt >= start_dt)
+            and (end_dt is None or s.start_dt < end_dt)
+        ]
+
+    print(f"{len(to_process)} of {len(segments)} pictures will be extracted")
+    if not to_process:
+        return
+
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise OSError(f"Failed to create output directory '{output_dir}': {error}")
+
+    for seg in to_process:
+        extract_picture_segment(seg, camera_dir, output_dir, replace=replace)
+
+
+def log_available_pictures(segments: list[RecordingSegment]) -> None:
+    for i, seg in enumerate(segments):
+        start = seg.start_dt.strftime("%Y-%m-%d %H:%M:%S")
+        print(
+            f"{i:>4}  {seg.source_file_name}  {start}  "
             f"({seg.raw.start_offset:09d} – {seg.raw.end_offset:09d})"
         )
