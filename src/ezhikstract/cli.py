@@ -121,6 +121,7 @@ def extract_videos(
 
     # Extract all matching video segments and merge them daily
     try:
+        output_dir = output_dir.expanduser().resolve()
         _, segments = process_segments(input_dir)
         extract_all_segments(
             segments,
@@ -186,6 +187,7 @@ def extract_pictures(
 
     # Extract picture segments and write them as JPEG files
     try:
+        output_dir = output_dir.expanduser().resolve()
         _, segments = process_picture_segments(input_dir)
         extract_all_pictures(
             segments,

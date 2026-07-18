@@ -1,3 +1,4 @@
+import struct
 from dataclasses import dataclass
 
 # Index file layout
@@ -30,23 +31,16 @@ class Segment:
 
 def parse_index_header(data: bytes) -> IndexHeader:
     """Parse the first HEADER_BUFFER_LENGTH bytes of an index file."""
-    off = 0
-    modify_counter = int.from_bytes(data[off : off + 8], "little")
-    off += 8
-    index_version = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-    av_files = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-    next_file_no = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-    last_file_no = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-    cur_file_info = data[off : off + 1176]
-    off += 1176
-    unknown = data[off : off + 76]
-    off += 76
-    checksum = int.from_bytes(data[off : off + 4], "little")
-    off += 4
+    (
+        modify_counter,
+        index_version,
+        av_files,
+        next_file_no,
+        last_file_no,
+        cur_file_info,
+        unknown,
+        checksum,
+    ) = struct.unpack("<QIIII1176s76sI", data)
 
     return IndexHeader(
         modify_counter=modify_counter,
@@ -62,27 +56,9 @@ def parse_index_header(data: bytes) -> IndexHeader:
 
 def parse_segment(data: bytes) -> Segment:
     """Parse one 80-byte segment record from the index file."""
-    off = 0
-
-    # segmentType + status + reservedA + resolution (8 bytes — unused)
-    off += 8
-
-    start_time_raw = int.from_bytes(data[off : off + 8], "little")
-    off += 8
-    end_time_raw = int.from_bytes(data[off : off + 8], "little")
-    off += 8
-
-    # firstKeyFrameAbsTime + firstKeyFrameStdTime + lastFrameStdTime (16 bytes — unused)
-    off += 16
-
-    start_offset = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-    end_offset = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-
-    # reservedB + infoCount + infoTypes + infoStartTime + infoEndTime +
-    # infoStartOffset + infoEndOffset (28 bytes — unused)
-    off += 28
+    start_time_raw, end_time_raw, start_offset, end_offset = struct.unpack(
+        "<8xQQ16xII32x", data
+    )
 
     return Segment(
         start_time_raw=start_time_raw,
@@ -94,26 +70,9 @@ def parse_segment(data: bytes) -> Segment:
 
 def parse_picture_segment(data: bytes) -> Segment:
     """Parse one 96-byte segment record from the picture index file."""
-    off = 0
-
-    # type + status + resA + resolution (8 bytes — unused)
-    off += 8
-
-    start_time_raw = int.from_bytes(data[off : off + 8], "little")
-    off += 8
-    end_time_raw = int.from_bytes(data[off : off + 8], "little")
-    off += 8
-
-    # firstKeyFrameAbsTime + firstKeyFrameStdTime + lastFrameStdTime (16 bytes — unused)
-    off += 16
-
-    start_offset = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-    end_offset = int.from_bytes(data[off : off + 4], "little")
-    off += 4
-
-    # resB + infoNum + infoTypes + infoStartTime + infoEndTime + infoStartOffset + infoEndOffset + watermark (44 bytes - unused)
-    off += 44
+    start_time_raw, end_time_raw, start_offset, end_offset = struct.unpack(
+        "<8xQQ16xII48x", data
+    )
 
     return Segment(
         start_time_raw=start_time_raw,

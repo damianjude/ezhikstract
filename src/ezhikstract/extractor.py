@@ -1,4 +1,6 @@
+import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -157,7 +159,8 @@ def extract_segment(
       - Video: HEVC stream-copied (hvc1 tag for broad compatibility)
       - Audio: re-encoded to Opus at 64 kbps (pcm_alaw isn't valid in .mp4)
 
-    The segment is first dumped to a temporary MPEG-PS file, then passed to ffmpeg for remuxing.  Returns the path to the produced .mp4, or None on failure.
+    The segment is read in chunks and piped directly to ffmpeg for remuxing.
+    Returns the path to the produced .mp4, or None on failure.
     """
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -174,40 +177,29 @@ def extract_segment(
         f"{start_str} - {end_str} "
         f"({segment.source_file_index:05d}-{segment.source_file_segment_index:03d})"
     )
-    tmp_mpeg = output_dir / f"{stem}.mpeg"
     mp4_file = output_dir / f"{stem}.mp4"
 
     if mp4_file.exists() and not replace:
         return mp4_file
-    if mp4_file.exists():
-        try:
-            mp4_file.unlink()
-        except OSError as error:
-            print(
-                f"Error: Failed to delete existing output file {mp4_file}: {error}",
-                file=sys.stderr,
-            )
-            return None
 
-    # Dump raw segment bytes to a temporary MPEG-PS file
     try:
-        with open(camera_dir / segment.source_file_name, "rb") as fh:
-            fh.seek(segment.raw.start_offset)
-            raw = fh.read(segment.raw.end_offset - segment.raw.start_offset)
-        tmp_mpeg.write_bytes(raw)
+        mp4_file.unlink(missing_ok=True)
     except OSError as error:
         print(
-            f"Error: Failed to read/write raw bytes for segment {segment.start_dt}: {error}",
+            f"Error: Failed to delete existing output file {mp4_file}: {error}",
             file=sys.stderr,
         )
-        tmp_mpeg.unlink(missing_ok=True)
         return None
 
     # Stream-copy HEVC video and re-encode audio to Opus
     cmd = [
         imageio_ffmpeg.get_ffmpeg_exe(),
+        "-loglevel",
+        "error",
+        "-f",
+        "mpeg",
         "-i",
-        str(tmp_mpeg),
+        "pipe:0",
         "-c:v",
         "copy",
         "-tag:v",
@@ -221,34 +213,68 @@ def extract_segment(
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        if result.stderr:
-            # We skip printing ffmpeg log messages unless there is a crash/error
-            pass
-        return mp4_file
-    except subprocess.CalledProcessError as error:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except (subprocess.SubprocessError, OSError) as error:
         print(
-            f"ffmpeg failed on segment {segment.start_dt} with exit code {error.returncode}.",
+            f"Failed to start ffmpeg process for segment {segment.start_dt}: {error}",
             file=sys.stderr,
         )
-        if error.stderr:
-            print(f"ffmpeg stderr:\n{error.stderr}", file=sys.stderr)
-        if mp4_file.exists():
+        return None
+
+    if proc.stdin is None or proc.stderr is None:
+        print(
+            f"Failed to initialize ffmpeg pipes for segment {segment.start_dt}",
+            file=sys.stderr,
+        )
+        return None
+
+    try:
+        with open(camera_dir / segment.source_file_name, "rb") as fh:
+            fh.seek(segment.raw.start_offset)
+            remaining = segment.raw.end_offset - segment.raw.start_offset
+
             try:
-                mp4_file.unlink()
+                while remaining > 0:
+                    chunk_size = min(remaining, 1024 * 1024)  # 1MB chunk
+                    chunk = fh.read(chunk_size)
+                    if not chunk:
+                        break
+                    proc.stdin.write(chunk)
+                    remaining -= len(chunk)
+                proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+
+        stderr_bytes = proc.stderr.read()
+        return_code = proc.wait()
+
+        if return_code != 0:
+            stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+            print(
+                f"ffmpeg failed on segment {segment.start_dt} with exit code {return_code}.\n"
+                f"ffmpeg stderr: {stderr_text}",
+                file=sys.stderr,
+            )
+            try:
+                mp4_file.unlink(missing_ok=True)
             except OSError:
                 pass
+            return None
+
+        return mp4_file
+    except Exception as error:
+        print(f"Failed to extract segment {segment.start_dt}: {error}", file=sys.stderr)
+        proc.kill()
+        try:
+            mp4_file.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
-    except (subprocess.SubprocessError, OSError) as error:
-        print(f"ffmpeg failed on segment {segment.start_dt}: {error}", file=sys.stderr)
-        if mp4_file.exists():
-            try:
-                mp4_file.unlink()
-            except OSError:
-                pass
-        return None
-    finally:
-        tmp_mpeg.unlink(missing_ok=True)
 
 
 def extract_all_segments(
@@ -266,6 +292,7 @@ def extract_all_segments(
     Time filters use "YYYY-MM-DD HH:MM:SS" format (UTC).
     """
     from .merger import merge_day  # local import avoids circular dependency
+    from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 
     to_process = segments
     if from_time or to_time:
@@ -294,7 +321,7 @@ def extract_all_segments(
         to_process = [
             s
             for s in segments
-            if (start_dt is None or s.start_dt >= start_dt)
+            if (start_dt is None or s.end_dt > start_dt)
             and (end_dt is None or s.start_dt < end_dt)
         ]
 
@@ -312,30 +339,68 @@ def extract_all_segments(
     except OSError as error:
         raise OSError(f"Failed to create output directory '{output_dir}': {error}")
 
-    for day_key in sorted(by_day):
-        day_segs = by_day[day_key]
-        print(f"Processing {day_key} ({len(day_segs)} segments)")
+    with Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("({task.completed}/{task.total} segments)"),
+        TimeRemainingColumn(),
+    ) as progress:
+        task_id = progress.add_task(
+            "Extracting video segments...", total=len(to_process)
+        )
 
-        # Generate target output path for the daily merged video
-        first_start = day_segs[0].start_dt
-        output_name = first_start.strftime("%d%m%Y %H%M%S") + ".mp4"
-        output_path = output_dir / output_name
+        for day_key in sorted(by_day):
+            day_segs = by_day[day_key]
+            progress.console.print(
+                f"[bold green]Processing {day_key} ({len(day_segs)} segments)[/bold green]"
+            )
 
-        if output_path.exists() and not replace:
-            print(f"Merged file {output_name} already exists. Skipping day {day_key}.")
-            continue
+            # Generate target output path for the daily merged video
+            first_start = day_segs[0].start_dt
+            output_name = first_start.strftime("%d%m%Y %H%M%S") + ".mp4"
+            output_path = output_dir / output_name
 
-        # Extract segments into a temp directory to avoid cluttering output_dir
-        with tempfile.TemporaryDirectory(dir=output_dir) as tmpdir_str:
-            tmpdir = Path(tmpdir_str)
-            extracted: list[Path] = []
-            for seg in day_segs:
-                path = extract_segment(seg, camera_dir, tmpdir, replace=replace)
-                if path and path.exists():
-                    extracted.append(path)
+            if output_path.exists() and not replace:
+                progress.console.print(
+                    f"Merged file {output_name} already exists. Skipping day {day_key}."
+                )
+                progress.advance(task_id, advance=len(day_segs))
+                continue
 
-            if extracted:
-                merge_day(extracted, output_path, replace=replace)
+            # Extract segments into a temp directory to avoid cluttering output_dir
+            with tempfile.TemporaryDirectory(dir=output_dir) as tmpdir_str:
+                tmpdir = Path(tmpdir_str)
+                extracted_map: dict[int, Path] = {}
+
+                # Limit concurrency to 4 workers or CPU cores to avoid overwhelming the disk
+                max_workers = min(4, os.cpu_count() or 1)
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(
+                            extract_segment, seg, camera_dir, tmpdir, replace=replace
+                        ): seg
+                        for seg in day_segs
+                    }
+                    for future in as_completed(futures):
+                        seg = futures[future]
+                        try:
+                            path = future.result()
+                            if path and path.exists():
+                                extracted_map[id(seg)] = path
+                        except Exception as error:
+                            progress.console.print(
+                                f"[bold red]Error extracting segment {seg.start_dt}: {error}[/bold red]",
+                            )
+                        progress.advance(task_id)
+
+                # Ensure extracted segments are sorted chronologically by their start_dt
+                extracted = [
+                    extracted_map[id(seg)] for seg in day_segs if id(seg) in extracted_map
+                ]
+
+                if extracted:
+                    merge_day(extracted, output_path, replace=replace)
 
 
 def log_available_recordings(segments: list[RecordingSegment]) -> None:
@@ -481,6 +546,8 @@ def extract_all_pictures(
     output_dir: Path = Path("extracted"),
     replace: bool = True,
 ) -> None:
+    from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
+
     to_process = segments
     if from_time or to_time:
         fmt = "%Y-%m-%d %H:%M:%S"
@@ -505,10 +572,11 @@ def extract_all_pictures(
                 f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
             )
 
+        # For pictures, start_dt and end_dt are equal, so standard overlap check works:
         to_process = [
             s
             for s in segments
-            if (start_dt is None or s.start_dt >= start_dt)
+            if (start_dt is None or s.end_dt >= start_dt)
             and (end_dt is None or s.start_dt < end_dt)
         ]
 
@@ -521,8 +589,35 @@ def extract_all_pictures(
     except OSError as error:
         raise OSError(f"Failed to create output directory '{output_dir}': {error}")
 
-    for seg in to_process:
-        extract_picture_segment(seg, camera_dir, output_dir, replace=replace)
+    with Progress(
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("({task.completed}/{task.total} pictures)"),
+        TimeRemainingColumn(),
+    ) as progress:
+        task_id = progress.add_task("Extracting pictures...", total=len(to_process))
+
+        max_workers = min(8, os.cpu_count() or 1)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(
+                    extract_picture_segment,
+                    seg,
+                    camera_dir,
+                    output_dir,
+                    replace=replace,
+                )
+                for seg in to_process
+            ]
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as error:
+                    progress.console.print(
+                        f"[bold red]Error extracting picture: {error}[/bold red]",
+                    )
+                progress.advance(task_id)
 
 
 def log_available_pictures(segments: list[RecordingSegment]) -> None:

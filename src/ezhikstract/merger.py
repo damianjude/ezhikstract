@@ -28,14 +28,12 @@ def merge_day(
 
     if output_path.exists() and not replace:
         return output_path
-    if output_path.exists():
-        try:
-            output_path.unlink()
-        except OSError as error:
-            print(
-                f"Error: Failed to delete existing output file {output_path}: {error}"
-            )
-            return None
+
+    try:
+        output_path.unlink(missing_ok=True)
+    except OSError as error:
+        print(f"Error: Failed to delete existing output file {output_path}: {error}")
+        return None
 
     # Escape single quotes to prevent syntax errors in the ffmpeg concat file
     lines: list[str] = []
