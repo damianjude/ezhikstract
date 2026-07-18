@@ -13,7 +13,6 @@ Important edge cases:
 
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from ezhikstract.cli import app
@@ -41,22 +40,32 @@ def test_cli_extract_videos(tmp_path: Path, mocker):
     # Setup dummy directory
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
-    
+
     # Mock the internal logic
-    mock_process = mocker.patch("ezhikstract.extractor.process_segments", return_value=(None, []))
+    mock_process = mocker.patch(
+        "ezhikstract.extractor.process_segments", return_value=(None, [])
+    )
     mock_extract = mocker.patch("ezhikstract.extractor.extract_all_segments")
-    
+
     out_dir = tmp_path / "out"
-    
+
     result = runner.invoke(
         app,
-        ["extract", "videos", str(cam_dir), "--output", str(out_dir), "--from", "2023-01-01 12:00:00"]
+        [
+            "extract",
+            "videos",
+            str(cam_dir),
+            "--output",
+            str(out_dir),
+            "--from",
+            "2023-01-01 12:00:00",
+        ],
     )
-    
+
     assert result.exit_code == 0
     mock_process.assert_called_once_with(cam_dir)
     mock_extract.assert_called_once()
-    
+
     # Verify the time argument is passed properly
     _, kwargs = mock_extract.call_args
     assert kwargs["from_time"] == "2023-01-01 12:00:00"
@@ -66,12 +75,14 @@ def test_cli_extract_pictures(tmp_path: Path, mocker):
     """Extract pictures command should parse arguments and call the picture extractor."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
-    
-    mock_process = mocker.patch("ezhikstract.extractor.process_picture_segments", return_value=(None, []))
+
+    mock_process = mocker.patch(
+        "ezhikstract.extractor.process_picture_segments", return_value=(None, [])
+    )
     mock_extract = mocker.patch("ezhikstract.extractor.extract_all_pictures")
-    
+
     result = runner.invoke(app, ["extract", "pictures", str(cam_dir)])
-    
+
     assert result.exit_code == 0
     mock_process.assert_called_once_with(cam_dir)
     mock_extract.assert_called_once()

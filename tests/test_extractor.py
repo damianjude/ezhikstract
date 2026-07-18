@@ -13,11 +13,9 @@ Important edge cases:
 - Subprocess mocking for ffmpeg extraction.
 """
 
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
 
 from ezhikstract.extractor import (
     _is_valid_mpeg_ps,
@@ -26,7 +24,6 @@ from ezhikstract.extractor import (
     extract_all_segments,
     process_picture_segments,
     extract_picture_segment,
-    extract_all_pictures,
     RecordingSegment,
 )
 from ezhikstract.parser import Segment
@@ -65,7 +62,7 @@ def test_process_segments(camera_dir: Path):
 def test_process_segments_missing_source_file(camera_dir: Path):
     """If the source hivXXXXX.mp4 is missing, the segments are skipped gracefully."""
     (camera_dir / "hiv00000.mp4").unlink()
-    
+
     header, segments = process_segments(camera_dir)
     assert len(segments) == 0
 
@@ -91,7 +88,9 @@ def test_extract_segment_success(camera_dir: Path, tmp_path: Path, mock_ffmpeg, 
     mock_proc.stdin.write.assert_called()
 
 
-def test_extract_segment_ffmpeg_failure(camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker):
+def test_extract_segment_ffmpeg_failure(
+    camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker
+):
     """If ffmpeg fails (non-zero exit code), it should clean up the output file and return None."""
     _, segments = process_segments(camera_dir)
     segment = segments[0]
@@ -117,7 +116,9 @@ def test_extract_all_segments(camera_dir: Path, tmp_path: Path, mock_ffmpeg, moc
         return p
 
     # Mock extract_segment to bypass real extraction logic inside the ThreadPoolExecutor
-    mock_extract_segment = mocker.patch("ezhikstract.extractor.extract_segment", side_effect=mock_extract)
+    mock_extract_segment = mocker.patch(
+        "ezhikstract.extractor.extract_segment", side_effect=mock_extract
+    )
     mock_merge = mocker.patch("ezhikstract.merger.merge_day")
 
     out_dir = tmp_path / "recordings"
@@ -138,30 +139,32 @@ def test_extract_all_segments_time_filter(camera_dir: Path, tmp_path: Path, mock
         source_file_segment_index=0,
         source_file_name="test.mp4",
     )
-    
+
     mock_extract = mocker.patch("ezhikstract.extractor.extract_segment")
     mocker.patch("ezhikstract.merger.merge_day")
 
     # Time filter completely outside segment
     extract_all_segments([seg1], camera_dir, from_time="2023-01-01 13:00:00")
     mock_extract.assert_not_called()
-    
+
     # Time filter overlaps segment
     extract_all_segments([seg1], camera_dir, from_time="2023-01-01 11:00:00")
     mock_extract.assert_called_once()
 
 
-def test_process_picture_segments(tmp_path: Path, create_valid_index00p, create_valid_pic):
+def test_process_picture_segments(
+    tmp_path: Path, create_valid_index00p, create_valid_pic
+):
     """Valid picture directories should be processed."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
-    
+
     index_path = create_valid_index00p(1)
     index_path.rename(cam_dir / "index00p.bin")
-    
+
     pic_path = create_valid_pic("hiv00000.pic", 200)
     pic_path.rename(cam_dir / "hiv00000.pic")
-    
+
     header, segments = process_picture_segments(cam_dir)
     assert header.av_files == 1
     assert len(segments) == 1
@@ -174,18 +177,20 @@ def test_extract_picture_segment(tmp_path: Path, create_valid_pic):
     cam_dir.mkdir()
     pic_path = create_valid_pic("hiv00000.pic", 200)
     pic_path.rename(cam_dir / "hiv00000.pic")
-    
+
     out_dir = tmp_path / "out"
-    
+
     seg = RecordingSegment(
-        raw=Segment(start_time_raw=123, end_time_raw=123, start_offset=0, end_offset=100),
+        raw=Segment(
+            start_time_raw=123, end_time_raw=123, start_offset=0, end_offset=100
+        ),
         start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         end_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         source_file_index=0,
         source_file_segment_index=0,
         source_file_name="hiv00000.pic",
     )
-    
+
     result = extract_picture_segment(seg, cam_dir, out_dir, replace=True)
     assert result is not None
     assert result.exists()

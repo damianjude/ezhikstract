@@ -77,7 +77,7 @@ def test_load_index_too_small(tmp_path: Path, data: bytes):
     """Loading an index file smaller than the header buffer should raise ValueError."""
     index_path = tmp_path / "index00.bin"
     index_path.write_bytes(data)
-    
+
     with pytest.raises(ValueError, match="Index file is too small"):
         load_index(str(index_path))
 
@@ -88,7 +88,7 @@ def test_load_picture_index_too_small(tmp_path: Path, data: bytes):
     """Loading a picture index file smaller than the header buffer should raise ValueError."""
     index_path = tmp_path / "index00p.bin"
     index_path.write_bytes(data)
-    
+
     with pytest.raises(ValueError, match="Index file is too small"):
         load_picture_index(str(index_path))
 
@@ -97,7 +97,7 @@ def test_load_index_valid(create_valid_index00):
     """Valid index files should be parsed, yielding the header and segments."""
     index_path = create_valid_index00(num_files=2, num_segments=3)
     header, segments = load_index(str(index_path))
-    
+
     assert header.av_files == 2
     assert len(segments) == 3
     assert segments[0].start_offset == 0
@@ -108,7 +108,7 @@ def test_load_picture_index_valid(create_valid_index00p):
     """Valid picture index files should pack consecutive pictures into segments."""
     index_path = create_valid_index00p(num_segments=3)
     header, segments = load_picture_index(str(index_path))
-    
+
     assert header.av_files == 1
     assert len(segments) == 3
     # Verify tuple layout is (file_idx, segment)
@@ -124,12 +124,9 @@ def test_parse_segment_offsets():
     end_time = 1234567891
     start_offset = 100
     end_offset = 200
-    
-    data = struct.pack(
-        "<8xQQ16xII32x",
-        start_time, end_time, start_offset, end_offset
-    )
-    
+
+    data = struct.pack("<8xQQ16xII32x", start_time, end_time, start_offset, end_offset)
+
     assert len(data) == SEGMENT_RECORD_LENGTH
     seg = parse_segment(data)
     assert seg.start_time_raw == start_time
@@ -143,19 +140,18 @@ def test_parse_picture_segment_offsets():
     time_val = 1234567890
     start_offset = 100
     end_offset = 200
-    
-    data = struct.pack(
-        "<8xQQ16xII48x",
-        time_val, time_val, start_offset, end_offset
-    )
-    
+
+    data = struct.pack("<8xQQ16xII48x", time_val, time_val, start_offset, end_offset)
+
     assert len(data) == SEGMENT_RECORD_LENGTH_PIC
     seg = parse_picture_segment(data)
     assert seg.start_time_raw == time_val
     assert seg.end_offset == end_offset
 
 
-def test_load_index_corrupt_av_files_avoids_memory_error(create_valid_index00, tmp_path: Path):
+def test_load_index_corrupt_av_files_avoids_memory_error(
+    create_valid_index00, tmp_path: Path
+):
     """An maliciously high av_files value shouldn't crash the loop via out-of-bounds offset reads."""
     index_path = tmp_path / "index00.bin"
     # Create header with av_files = 1,000,000 but small file size
@@ -163,7 +159,7 @@ def test_load_index_corrupt_av_files_avoids_memory_error(create_valid_index00, t
         "<QIIII1176s76sI", 1, 3, 1000000, 1, 0, b"\x00" * 1176, b"\x00" * 76, 0
     )
     index_path.write_bytes(header)
-    
+
     # Should safely terminate loop as offset will exceed file size
     header_res, segments_res = load_index(str(index_path))
     assert header_res.av_files == 1000000
@@ -173,19 +169,23 @@ def test_load_index_corrupt_av_files_avoids_memory_error(create_valid_index00, t
 def test_load_picture_index_terminates_on_padding(tmp_path: Path):
     """A padding block (\x00\x00\x00\x00) should cleanly terminate parsing of index00p.bin."""
     index_path = tmp_path / "index00p.bin"
-    
-    header = struct.pack("<QIIII1176s76sI", 1, 3, 1, 1, 0, b"\x00" * 1176, b"\x00" * 76, 0)
+
+    header = struct.pack(
+        "<QIIII1176s76sI", 1, 3, 1, 1, 0, b"\x00" * 1176, b"\x00" * 76, 0
+    )
     # File record
     file_record = b"\x00" * FILE_RECORD_LENGTH
     # 1 valid segment
     time_val = 1234567890
-    seg = struct.pack("<4s4xQQ16xII48x", b"\x01\x02\x03\x04", time_val, time_val, 0, 100)
+    seg = struct.pack(
+        "<4s4xQQ16xII48x", b"\x01\x02\x03\x04", time_val, time_val, 0, 100
+    )
     # 1 padding block
     pad = b"\x00\x00\x00\x00" + b"\xff" * (SEGMENT_RECORD_LENGTH_PIC - 4)
-    
+
     index_path.write_bytes(header + file_record + seg + pad)
-    
+
     header_res, segments_res = load_picture_index(str(index_path))
-    
+
     # Should only read the first segment, returning lengths of 1
     assert len(segments_res) == 1
