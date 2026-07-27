@@ -11,7 +11,7 @@ No full video re-encoding is performed; video streams (HEVC) are copied directly
 Ensure you have Python 3.10 or higher installed. You can install the package directly:
 
 ```bash
-pip install ezhikstract
+pipx install ezhikstract
 ```
 
 ## Usage
