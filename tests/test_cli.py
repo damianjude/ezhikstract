@@ -17,7 +17,6 @@ from typer.testing import CliRunner
 
 from ezhikstract.cli import app
 
-
 runner = CliRunner()
 
 

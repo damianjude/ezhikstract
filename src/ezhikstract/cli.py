@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -90,7 +90,7 @@ def extract_videos(
         ),
     ] = Path("./recordings"),
     from_time: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--from",
             help='Inclusive start filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
@@ -98,7 +98,7 @@ def extract_videos(
         ),
     ] = None,
     to_time: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--to",
             help='Exclusive end filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
@@ -157,7 +157,7 @@ def extract_pictures(
         ),
     ] = Path("./pictures"),
     from_time: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--from",
             help='Inclusive start filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
@@ -165,7 +165,7 @@ def extract_pictures(
         ),
     ] = None,
     to_time: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--to",
             help='Exclusive end filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',

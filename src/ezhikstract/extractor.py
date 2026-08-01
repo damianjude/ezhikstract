@@ -1,17 +1,17 @@
 import os
 import subprocess
+import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-import sys
-import tempfile
 
 import imageio_ffmpeg
 
 from .parser import (
-    IndexHeader,
     MAX_SEGMENTS_PER_SOURCE_FILE,
+    IndexHeader,
     Segment,
     load_index,
 )
@@ -267,7 +267,7 @@ def extract_segment(
             return None
 
         return mp4_file
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001
         print(f"Failed to extract segment {segment.start_dt}: {error}", file=sys.stderr)
         proc.kill()
         try:
@@ -291,8 +291,9 @@ def extract_all_segments(
 
     Time filters use "YYYY-MM-DD HH:MM:SS" format (UTC).
     """
+    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+
     from .merger import merge_day  # local import avoids circular dependency
-    from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
 
     to_process = segments
     if from_time or to_time:
@@ -388,7 +389,7 @@ def extract_all_segments(
                             path = future.result()
                             if path and path.exists():
                                 extracted_map[id(seg)] = path
-                        except Exception as error:
+                        except Exception as error:  # noqa: BLE001
                             progress.console.print(
                                 f"[bold red]Error extracting segment {seg.start_dt}: {error}[/bold red]",
                             )
@@ -548,7 +549,7 @@ def extract_all_pictures(
     output_dir: Path = Path("extracted"),
     replace: bool = True,
 ) -> None:
-    from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn
+    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 
     to_process = segments
     if from_time or to_time:
@@ -615,7 +616,7 @@ def extract_all_pictures(
             for future in as_completed(futures):
                 try:
                     future.result()
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001
                     progress.console.print(
                         f"[bold red]Error extracting picture: {error}[/bold red]",
                     )

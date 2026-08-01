@@ -18,18 +18,19 @@ import struct
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, HealthCheck, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from ezhikstract.parser import (
-    HEADER_BUFFER_LENGTH,
     FILE_RECORD_LENGTH,
+    HEADER_BUFFER_LENGTH,
     SEGMENT_RECORD_LENGTH,
     SEGMENT_RECORD_LENGTH_PIC,
     load_index,
     load_picture_index,
     parse_index_header,
-    parse_segment,
     parse_picture_segment,
+    parse_segment,
 )
 
 
@@ -185,7 +186,7 @@ def test_load_picture_index_terminates_on_padding(tmp_path: Path):
 
     index_path.write_bytes(header + file_record + seg + pad)
 
-    header_res, segments_res = load_picture_index(str(index_path))
+    _, segments_res = load_picture_index(str(index_path))
 
     # Should only read the first segment, returning lengths of 1
     assert len(segments_res) == 1

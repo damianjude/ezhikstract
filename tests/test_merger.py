@@ -15,7 +15,6 @@ Important edge cases:
 import subprocess
 from pathlib import Path
 
-
 from ezhikstract.merger import merge_day
 
 

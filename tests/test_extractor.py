@@ -16,15 +16,14 @@ Important edge cases:
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 from ezhikstract.extractor import (
-    _is_valid_mpeg_ps,
-    process_segments,
-    extract_segment,
-    extract_all_segments,
-    process_picture_segments,
-    extract_picture_segment,
     RecordingSegment,
+    _is_valid_mpeg_ps,
+    extract_all_segments,
+    extract_picture_segment,
+    extract_segment,
+    process_picture_segments,
+    process_segments,
 )
 from ezhikstract.parser import Segment
 
@@ -63,7 +62,7 @@ def test_process_segments_missing_source_file(camera_dir: Path):
     """If the source hivXXXXX.mp4 is missing, the segments are skipped gracefully."""
     (camera_dir / "hiv00000.mp4").unlink()
 
-    header, segments = process_segments(camera_dir)
+    _, segments = process_segments(camera_dir)
     assert len(segments) == 0
 
 
