@@ -55,12 +55,18 @@ def merge_day(
     # Stream-copy concatenate segment files without re-encoding
     cmd = [
         imageio_ffmpeg.get_ffmpeg_exe(),
+        "-loglevel",
+        "error",
         "-f",
         "concat",
         "-safe",
         "0",
         "-i",
         str(concat_list),
+        "-map",
+        "0:v",
+        "-map",
+        "0:a?",
         "-c",
         "copy",
         "-y",

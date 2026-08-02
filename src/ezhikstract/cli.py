@@ -93,7 +93,7 @@ def extract_videos(
         str | None,
         typer.Option(
             "--from",
-            help='Inclusive start filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
+            help='Inclusive start filter (format: "YYYY-MM-DD HH:MM:SS").',
             metavar="DATETIME",
         ),
     ] = None,
@@ -101,7 +101,7 @@ def extract_videos(
         str | None,
         typer.Option(
             "--to",
-            help='Exclusive end filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
+            help='Exclusive end filter (format: "YYYY-MM-DD HH:MM:SS").',
             metavar="DATETIME",
         ),
     ] = None,
@@ -160,7 +160,7 @@ def extract_pictures(
         str | None,
         typer.Option(
             "--from",
-            help='Inclusive start filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
+            help='Inclusive start filter (format: "YYYY-MM-DD HH:MM:SS").',
             metavar="DATETIME",
         ),
     ] = None,
@@ -168,7 +168,7 @@ def extract_pictures(
         str | None,
         typer.Option(
             "--to",
-            help='Exclusive end filter, UTC (format: "YYYY-MM-DD HH:MM:SS").',
+            help='Exclusive end filter (format: "YYYY-MM-DD HH:MM:SS").',
             metavar="DATETIME",
         ),
     ] = None,

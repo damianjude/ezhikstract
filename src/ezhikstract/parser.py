@@ -10,6 +10,14 @@ MAX_SEGMENTS_PER_SOURCE_FILE: int = 256
 
 
 @dataclass
+class FileRecord:
+    file_index: int
+    segment_count: int
+    start_time_raw: int
+    end_time_raw: int
+
+
+@dataclass
 class IndexHeader:
     modify_counter: int  # number of times video segments have been modified
     index_version: int  # 2 or 3
@@ -19,6 +27,11 @@ class IndexHeader:
     cur_file_info: bytes  # see README.md
     unknown: bytes
     checksum: int
+    file_records: list[FileRecord] = None
+
+    def __post_init__(self) -> None:
+        if self.file_records is None:
+            self.file_records = []
 
 
 @dataclass
@@ -51,6 +64,19 @@ def parse_index_header(data: bytes) -> IndexHeader:
         cur_file_info=cur_file_info,
         unknown=unknown,
         checksum=checksum,
+    )
+
+
+def parse_file_record(data: bytes) -> FileRecord:
+    """Parse one 32-byte per-file record in the index header area."""
+    file_index, segment_count, start_time_raw, end_time_raw = struct.unpack(
+        "<IIII16x", data
+    )
+    return FileRecord(
+        file_index=file_index,
+        segment_count=segment_count,
+        start_time_raw=start_time_raw,
+        end_time_raw=end_time_raw,
     )
 
 
@@ -100,6 +126,19 @@ def load_index(index_path: str) -> tuple[IndexHeader, list[Segment]]:
 
     header = parse_index_header(data[:HEADER_BUFFER_LENGTH])
 
+    # Parse per-file 32-byte records from header area
+    file_records: list[FileRecord] = []
+    file_rec_offset = HEADER_BUFFER_LENGTH
+    for _ in range(header.av_files):
+        if file_rec_offset + FILE_RECORD_LENGTH <= len(data):
+            file_records.append(
+                parse_file_record(
+                    data[file_rec_offset : file_rec_offset + FILE_RECORD_LENGTH]
+                )
+            )
+            file_rec_offset += FILE_RECORD_LENGTH
+    header.file_records = file_records
+
     segments: list[Segment] = []
 
     # Segment table starts immediately after the header + the per-file records.
@@ -137,6 +176,19 @@ def load_picture_index(
         )
 
     header = parse_index_header(data[:HEADER_BUFFER_LENGTH])
+
+    # Parse per-file 32-byte records from header area
+    file_records: list[FileRecord] = []
+    file_rec_offset = HEADER_BUFFER_LENGTH
+    for _ in range(header.av_files):
+        if file_rec_offset + FILE_RECORD_LENGTH <= len(data):
+            file_records.append(
+                parse_file_record(
+                    data[file_rec_offset : file_rec_offset + FILE_RECORD_LENGTH]
+                )
+            )
+            file_rec_offset += FILE_RECORD_LENGTH
+    header.file_records = file_records
 
     segments: list[tuple[int, Segment]] = []
 

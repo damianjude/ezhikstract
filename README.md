@@ -2,16 +2,16 @@
 
 CLI tool to extract playable video from EZVIZ and Hikvision SD cards' proprietary round-robin storage format.
 
-It works specifically with security camera or video doorbell SD cards that contain files named `hiv<xxxxx>.mp4` and an `index00.bin` metadata/index file. The tool parses the index file, validates video segments, extracts the raw MPEG-PS streams, and remuxes them into standard `.mp4` containers, merging segments from the same day into a single daily video file.
+It works specifically with security camera or video doorbell SD cards that contain files named `hiv<xxxxx>.mp4` and an `index00.bin` metadata/index file. The tool parses the index file, validates video segments, extracts the raw MPEG-PS / HEVC streams, and remuxes them into standard `.mp4` containers, merging segments from the same day into a single daily video file formatted in your local timezone.
 
-No full video re-encoding is performed; video streams (HEVC) are copied directly. Audio streams (e.g., PCM G.711 / Alaw) are re-encoded to Opus to ensure compatibility with standard media players.
+No full video re-encoding is performed; video streams (HEVC) are copied directly. Audio streams (AAC / PCM G.711) are transcoded to Opus to ensure broad compatibility with standard media players.
 
 ## Installation
 
 Ensure you have Python 3.10 or higher installed. You can install the package directly:
 
 ```bash
-pipx install ezhikstract
+pip install ezhikstract
 ```
 
 ## Usage
@@ -20,10 +20,10 @@ The CLI provides two primary command groups: `list` and `extract`. Both groups s
 
 ### 1. The `list` Command Group
 
-Used to inspect valid records on the SD card without extracting any files.
+Used to inspect valid records on the SD card without extracting any files. Timestamps are formatted in your system's local timezone.
 
 #### Videos
-Lists all valid video segments detected on the SD card.
+Lists all valid active video segments detected on the SD card.
 
 ```bash
 ezhikstract list videos INPUT_DIR
@@ -45,7 +45,7 @@ ezhikstract list pictures INPUT_DIR
 Used to retrieve and process records from the SD card.
 
 #### Videos
-Extracts raw video segments from the container files, filters them by timestamp if requested, remuxes/transcodes them into standard `.mp4` containers, and merges segments from the same calendar day into a single daily file.
+Extracts raw video segments from active container files, filters them by timestamp if requested, remuxes/transcodes them into standard `.mp4` containers, and merges segments from the same calendar day into a single daily file named after the local start time (`DDMMYYYY HHMMSS.mp4`).
 
 ```bash
 ezhikstract extract videos INPUT_DIR [OPTIONS]
@@ -54,12 +54,12 @@ ezhikstract extract videos INPUT_DIR [OPTIONS]
 
 **Options:**
 * `-o, --output PATH`: The output directory for the daily merged `.mp4` files. Default is `./recordings`.
-* `--from DATETIME`: Start time filter (inclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
-* `--to DATETIME`: End time filter (exclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--from DATETIME`: Start time filter (inclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--to DATETIME`: End time filter (exclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
 * `--replace / --no-replace`: Overwrite existing files in the output directory. Default is `--replace`.
 
 #### Pictures
-Extracts raw snapshot thumbnails from the picture container files, filters them by timestamp if requested, and writes them out as standard JPEG (`.jpg`) files.
+Extracts raw snapshot thumbnails from picture container files, filters them by timestamp if requested, and writes them out as standard JPEG (`.jpg`) files named by local timestamp.
 
 ```bash
 ezhikstract extract pictures INPUT_DIR [OPTIONS]
@@ -68,36 +68,43 @@ ezhikstract extract pictures INPUT_DIR [OPTIONS]
 
 **Options:**
 * `-o, --output PATH`: The output directory for the extracted `.jpg` files. Default is `./pictures`.
-* `--from DATETIME`: Start time filter (inclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
-* `--to DATETIME`: End time filter (exclusive) in UTC, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--from DATETIME`: Start time filter (inclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--to DATETIME`: End time filter (exclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
 * `--replace / --no-replace`: Overwrite existing files in the output directory. Default is `--replace`.
 
 
 ## How it Works
 
 The SD cards of these cameras use a pre-allocated round-robin storage file format:
-1. `index00.bin` (and the backup copy `index01.bin`) contains pointers, timestamps, offsets, and checksums for the recorded video segments.
+1. `index00.bin` (and the backup copy `index01.bin`) contains pointers, timestamps, offsets, per-file header records, and checksums for the recorded video segments.
 2. The video data is written to pre-allocated `hivxxxxx.mp4` files, which are all exactly 268.4 MB (as are the index files).
-3. Within the `hivxxxxx.mp4` files, the videos are stored as raw MPEG-PS streams (MPEG Program Stream with HEVC video and G.711/PCM audio).
-4. `ezhikstract` parses `index00.bin`, verifies the boundaries and starts of the segments inside `hivxxxxx.mp4` (checking for valid MPEG-PS headers), extracts the segments, groups them by day, stream-copies the HEVC video tracks, re-encodes the audio to Opus, and concats the daily segments using the FFmpeg concat demuxer.
+3. `ezhikstract` parses the 32-byte per-file header records in `index00.bin` to filter out inactive / unwritten round-robin container files (`segment_count == 65535`).
+4. It aligns segment start offsets past proprietary headers to the MPEG-PS / HEVC start codes (`0x000001`).
+5. It executes an intelligent 3-tier fallback extraction chain:
+   - **MPEG-PS + AAC/Opus**: Decodes MPEG-PS streams with AAC/PCM audio transcoded to Opus.
+   - **MPEG-PS Video-Only**: Falls back to video-only (`-an`) if audio headers are missing or corrupted.
+   - **Raw HEVC Stream**: Uses `-f hevc` if the segment is a raw Annex-B HEVC stream without container headers.
+6. Daily segments are grouped by local calendar day and concatenated using FFmpeg concat demuxer (`-map 0:v -map 0:a?`) to preserve audio wherever present.
 
 ## Architecture and Design Decisions
 
 The repository is built around several design choices to maintain clean separation, high performance, and robustness:
 
-### 1. Stream-Piped Concurrency
-* **Piped I/O**: Rather than reading massive 268MB files into memory or writing huge intermediate raw stream dumps to disk, segments are read in small chunks and piped directly to the standard input of the `ffmpeg` subprocess.
+### 1. Stream-Piped Concurrency & Non-Blocking I/O
+* **Piped I/O**: Segments are read in memory chunks and passed to the standard input of `ffmpeg` subprocesses using `proc.communicate(input=segment_data, timeout=30)` to eliminate OS pipe deadlocks.
 * **Bounded Multithreading**: Uses a `ThreadPoolExecutor` to process segments in parallel. Concurrency limits are tuned to avoid high disk latency (limited to 4 workers for videos and 8 for pictures).
 
 ### 2. Lossless Remuxing & Transcoding
-* **Video Quality**: Video streams (HEVC) are copied directly (`-c:v copy`) using the `-tag:v hvc1` format to ensure native, lossless rendering on iOS and macOS players.
-* **Audio Compatibility**: PCM G.711 / Alaw audio tracks are transcoded on the fly to Opus (`-c:a libopus`), resolving compatibility issues without modifying the underlying video track.
-* **Concat Demuxer**: Uses the FFmpeg concat demuxer (`-f concat`) to combine chronological daily segments into a single file. This is a stream-copy operation, meaning no full decode-encode passes are executed.
+* **Video Quality**: Video streams (HEVC) are copied directly (`-c:v copy`) using the `-tag:v hvc1` format to ensure native, lossless rendering on iOS, macOS, and desktop media players.
+* **Audio Compatibility**: AAC / PCM G.711 audio tracks are transcoded on the fly to Opus (`-c:a libopus`), resolving compatibility issues without modifying the underlying video track.
+* **Concat Demuxer**: Uses the FFmpeg concat demuxer (`-f concat -map 0:v -map 0:a?`) to combine chronological daily segments into a single file. This is a stream-copy operation, meaning no full video re-encoding is executed.
 
 ### 3. Integrity and Validation
-* **MPEG-PS Validation**: Checks the first 2KB of each raw sector boundary for MPEG Program Stream Pack Start (`0x000001BA`) and System Header (`0x000001BB`) markers. Any sectors corrupt from sudden power loss or circular buffer overwrites are ignored.
+* **Active Round-Robin Filtering**: Reads the per-file 32-byte header records in `index00.bin` to ignore unwritten round-robin files (`segment_count == 65535`), preventing stale clips from past recording cycles from being extracted.
+* **Dummy Timestamp Filtering**: Automatically discards zeroed / pre-2020 dummy segment slots (`start_time_raw < 1577836800`).
+* **MPEG-PS Validation**: Checks the first 2KB of each raw sector boundary for MPEG Program Stream start codes (`0x000001`). Any sectors corrupt from sudden power loss or circular buffer overwrites are ignored.
 * **JPEG Verification**: Validates the Start of Image (SOI) magic bytes (`0xFF 0xD8 0xFF`) for all picture/thumbnail files before parsing.
-* **Range Checks**: Automatically discards records with inverted offsets/timestamps, or segments belonging to missing video containers.
+* **Local Timezone Support**: Converts all timestamps using the system's local timezone (`.astimezone()`) so merged daily files correspond 100% to local calendar days.
 
 ## Storage Format
 

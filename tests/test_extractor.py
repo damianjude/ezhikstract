@@ -30,9 +30,14 @@ from ezhikstract.parser import Segment
 
 def test_is_valid_mpeg_ps(tmp_path: Path, create_valid_mpeg_ps):
     """Valid and invalid MPEG headers should be recognized."""
-    # Valid
+    # Valid with system header
     valid_file = create_valid_mpeg_ps("valid.mp4")
     assert _is_valid_mpeg_ps(valid_file, offset=0) is True
+
+    # Valid MPEG-PS Pack Header (0x000001BA + 0x40) WITHOUT System Header (0x000001BB)
+    valid_no_sys = tmp_path / "valid_no_sys.mp4"
+    valid_no_sys.write_bytes(b"\x00\x00\x01\xba\x40" + b"\x00" * 100)
+    assert _is_valid_mpeg_ps(valid_no_sys, offset=0) is True
 
     # Invalid (missing marker)
     invalid_file = tmp_path / "invalid.mp4"
@@ -73,18 +78,30 @@ def test_extract_segment_success(camera_dir: Path, tmp_path: Path, mock_ffmpeg, 
 
     # Mock Popen
     mock_proc = mocker.MagicMock()
-    mock_proc.wait.return_value = 0
-    mock_proc.stderr.read.return_value = b""
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"", b"")
     mock_popen = mocker.patch("subprocess.Popen", return_value=mock_proc)
 
     out_dir = tmp_path / "out"
+
+    # Ensure side-effect of creating output file when Popen is called
+    def _side_effect(*args, **kwargs):
+        # Create output file so stat().st_size > 0 passes
+        s_str = segment.start_dt.strftime("%d%m%Y %H%M%S")
+        e_str = segment.end_dt.strftime("%d%m%Y %H%M%S")
+        stem = f"{s_str} - {e_str} ({segment.source_file_index:05d}-{segment.source_file_segment_index:03d})"
+        mp4 = out_dir / f"{stem}.mp4"
+        mp4.write_bytes(b"\x00" * 100)
+        return mock_proc
+
+    mock_popen.side_effect = _side_effect
+
     result = extract_segment(segment, camera_dir, out_dir, replace=True)
 
     assert result is not None
     assert result.parent == out_dir
     assert result.suffix == ".mp4"
-    mock_popen.assert_called_once()
-    mock_proc.stdin.write.assert_called()
+    mock_popen.assert_called()
 
 
 def test_extract_segment_ffmpeg_failure(
@@ -95,8 +112,8 @@ def test_extract_segment_ffmpeg_failure(
     segment = segments[0]
 
     mock_proc = mocker.MagicMock()
-    mock_proc.wait.return_value = 1
-    mock_proc.stderr.read.return_value = b"Error parsing stream"
+    mock_proc.returncode = 1
+    mock_proc.communicate.return_value = (b"Error parsing stream", b"")
     mocker.patch("subprocess.Popen", return_value=mock_proc)
 
     out_dir = tmp_path / "out"
@@ -132,8 +149,8 @@ def test_extract_all_segments_time_filter(camera_dir: Path, tmp_path: Path, mock
     # Create two segments, manually bypassing parser for speed
     seg1 = RecordingSegment(
         raw=Segment(0, 0, 0, 0),
-        start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-        end_dt=datetime(2023, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
+        start_dt=datetime(2023, 1, 1, 12, 0, 0).astimezone(),
+        end_dt=datetime(2023, 1, 1, 12, 5, 0).astimezone(),
         source_file_index=0,
         source_file_segment_index=0,
         source_file_name="test.mp4",

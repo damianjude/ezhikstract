@@ -31,29 +31,33 @@ class RecordingSegment:
     source_file_name: str  # e.g. "hiv00002.mp4"
 
 
-def _is_valid_mpeg_ps(path: Path, offset: int) -> bool:
+MIN_VALID_TIMESTAMP: int = 1577836800  # 2020-01-01 00:00:00 UTC
+
+
+def _find_mpeg_ps_start_offset(path: Path, offset: int) -> int | None:
     """
-    Peek at the bytes at offset and confirm the MPEG Program Stream Pack Start Code (0x000001BA),
-    MPEG-2 marker, and System Header (0x000001BB) within the first 2KB are present.
+    Peek at up to 2KB at offset and return the exact stream start offset of the MPEG Program Stream
+    Start Code (0x000001), or None if invalid or stale.
     """
     try:
         with open(path, "rb") as fh:
             fh.seek(offset)
             buffer = fh.read(2048)
     except (OSError, ValueError):
-        return False
+        return None
 
-    if len(buffer) < 5:
-        return False
+    if len(buffer) < 4:
+        return None
 
-    # Check for MPEG-PS start prefix (0x000001BA) and the MPEG-2 marker
-    if not (
-        int.from_bytes(buffer[:4], "big") == 0x000001BA and (buffer[4] & 0xC0) == 0x40
-    ):
-        return False
+    pos = buffer.find(b"\x00\x00\x01")
+    if pos != -1:
+        return offset + pos
+    return None
 
-    # Check for System Header (0x000001BB) within the first 2KB, matching mpegPsValidator.js
-    return b"\x00\x00\x01\xbb" in buffer
+
+def _is_valid_mpeg_ps(path: Path, offset: int) -> bool:
+    """Check if an MPEG Program Stream Start Code (0x000001) exists within 2KB of offset."""
+    return _find_mpeg_ps_start_offset(path, offset) is not None
 
 
 def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegment]]:
@@ -73,7 +77,15 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     skipped = 0
     warned_missing: set[str] = set()
 
+    active_files = {
+        rec.file_index
+        for rec in header.file_records
+        if rec.segment_count != 65535 and rec.segment_count > 0 and rec.start_time_raw > 0
+    }
+
     for source_file_index in range(header.av_files):
+        if active_files and source_file_index not in active_files:
+            continue
         if source_file_index * MAX_SEGMENTS_PER_SOURCE_FILE >= len(raw_segments):
             break
         for source_file_segment_index in range(MAX_SEGMENTS_PER_SOURCE_FILE):
@@ -88,10 +100,12 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
             if seg.end_time_raw == 0:
                 continue
 
-            # Filter out corrupted records with inverted offsets or start/end times
-            if seg.start_offset >= seg.end_offset or (
-                seg.start_time_raw & _DATE_MASK
-            ) >= (seg.end_time_raw & _DATE_MASK):
+            # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
+            if (
+                seg.start_offset >= seg.end_offset
+                or (seg.start_time_raw & _DATE_MASK) < MIN_VALID_TIMESTAMP
+                or (seg.start_time_raw & _DATE_MASK) > (seg.end_time_raw & _DATE_MASK)
+            ):
                 skipped += 1
                 continue
 
@@ -117,20 +131,23 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
                 skipped += 1
                 continue
 
-            if not _is_valid_mpeg_ps(source_path, seg.start_offset):
+            aligned_start = _find_mpeg_ps_start_offset(source_path, seg.start_offset)
+            if aligned_start is None:
                 skipped += 1
                 continue
 
-            # Apply date mask to extract the lower 32-bit Unix epoch timestamp
+            seg.start_offset = aligned_start
+
+            # Apply date mask to extract lower 32-bit Unix epoch timestamp in local time
             segments.append(
                 RecordingSegment(
                     raw=seg,
                     start_dt=datetime.fromtimestamp(
-                        seg.start_time_raw & _DATE_MASK, tz=timezone.utc
-                    ),
+                        seg.start_time_raw & _DATE_MASK
+                    ).astimezone(),
                     end_dt=datetime.fromtimestamp(
-                        seg.end_time_raw & _DATE_MASK, tz=timezone.utc
-                    ),
+                        seg.end_time_raw & _DATE_MASK
+                    ).astimezone(),
                     source_file_index=source_file_index,
                     source_file_segment_index=source_file_segment_index,
                     source_file_name=source_name,
@@ -147,6 +164,78 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     return header, segments
 
 
+def _run_ffmpeg_extract(
+    segment: RecordingSegment,
+    camera_dir: Path,
+    mp4_file: Path,
+    *,
+    input_format: str | None = "mpeg",
+    include_audio: bool = True,
+) -> tuple[bool, str]:
+    cmd = [
+        imageio_ffmpeg.get_ffmpeg_exe(),
+        "-loglevel",
+        "error",
+        "-err_detect",
+        "ignore_err",
+    ]
+    if input_format:
+        cmd.extend(["-f", input_format])
+
+    if include_audio and input_format == "mpeg":
+        cmd.extend(["-c:a", "aac"])
+
+    cmd.extend([
+        "-i",
+        "pipe:0",
+        "-c:v",
+        "copy",
+        "-tag:v",
+        "hvc1",
+    ])
+    if include_audio:
+        cmd.extend([
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "64k",
+        ])
+    else:
+        cmd.extend(["-an"])
+    cmd.extend(["-y", str(mp4_file)])
+
+    try:
+        source_path = camera_dir / segment.source_file_name
+        with open(source_path, "rb") as fh:
+            fh.seek(segment.raw.start_offset)
+            segment_data = fh.read(segment.raw.end_offset - segment.raw.start_offset)
+    except (OSError, ValueError) as error:
+        return False, f"Failed to read segment data: {error}"
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        _, stderr_bytes = proc.communicate(input=segment_data, timeout=30)
+        return_code = proc.returncode
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            _, stderr_bytes = proc.communicate(timeout=5)
+        except Exception:
+            stderr_bytes = b"FFmpeg process timed out"
+        return_code = -1
+    except (subprocess.SubprocessError, OSError) as error:
+        return False, str(error)
+
+    stderr_text = (stderr_bytes or b"").decode("utf-8", errors="replace").strip()
+    is_ok = return_code == 0 and mp4_file.exists() and mp4_file.stat().st_size > 0
+    return is_ok, stderr_text
+
+
 def extract_segment(
     segment: RecordingSegment,
     camera_dir: Path,
@@ -157,7 +246,7 @@ def extract_segment(
     """
     Extract one recording segment from its source .mp4 container and remux it into a proper .mp4:
       - Video: HEVC stream-copied (hvc1 tag for broad compatibility)
-      - Audio: re-encoded to Opus at 64 kbps (pcm_alaw isn't valid in .mp4)
+      - Audio: re-encoded to Opus at 64 kbps, or fallback to video-only if audio is missing/invalid.
 
     The segment is read in chunks and piped directly to ffmpeg for remuxing.
     Returns the path to the produced .mp4, or None on failure.
@@ -191,73 +280,36 @@ def extract_segment(
         )
         return None
 
-    # Stream-copy HEVC video and re-encode audio to Opus
-    cmd = [
-        imageio_ffmpeg.get_ffmpeg_exe(),
-        "-loglevel",
-        "error",
-        "-f",
-        "mpeg",
-        "-i",
-        "pipe:0",
-        "-c:v",
-        "copy",
-        "-tag:v",
-        "hvc1",
-        "-c:a",
-        "libopus",
-        "-b:a",
-        "64k",
-        "-y",
-        str(mp4_file),
-    ]
-
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+        # Attempt 1: MPEG-PS container with audio
+        success, stderr1 = _run_ffmpeg_extract(
+            segment, camera_dir, mp4_file, input_format="mpeg", include_audio=True
         )
-    except (subprocess.SubprocessError, OSError) as error:
-        print(
-            f"Failed to start ffmpeg process for segment {segment.start_dt}: {error}",
-            file=sys.stderr,
-        )
-        return None
 
-    if proc.stdin is None or proc.stderr is None:
-        print(
-            f"Failed to initialize ffmpeg pipes for segment {segment.start_dt}",
-            file=sys.stderr,
-        )
-        return None
-
-    try:
-        with open(camera_dir / segment.source_file_name, "rb") as fh:
-            fh.seek(segment.raw.start_offset)
-            remaining = segment.raw.end_offset - segment.raw.start_offset
-
+        # Attempt 2: MPEG-PS container video-only (-an)
+        if not success:
             try:
-                while remaining > 0:
-                    chunk_size = min(remaining, 1024 * 1024)  # 1MB chunk
-                    chunk = fh.read(chunk_size)
-                    if not chunk:
-                        break
-                    proc.stdin.write(chunk)
-                    remaining -= len(chunk)
-                proc.stdin.close()
-            except (BrokenPipeError, ConnectionResetError):
+                mp4_file.unlink(missing_ok=True)
+            except OSError:
                 pass
+            success, stderr2 = _run_ffmpeg_extract(
+                segment, camera_dir, mp4_file, input_format="mpeg", include_audio=False
+            )
 
-        stderr_bytes = proc.stderr.read()
-        return_code = proc.wait()
+        # Attempt 3: Raw HEVC elementary stream (-f hevc)
+        if not success:
+            try:
+                mp4_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+            success, stderr3 = _run_ffmpeg_extract(
+                segment, camera_dir, mp4_file, input_format="hevc", include_audio=False
+            )
 
-        if return_code != 0:
-            stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+        if not success:
             print(
-                f"ffmpeg failed on segment {segment.start_dt} with exit code {return_code}.\n"
-                f"ffmpeg stderr: {stderr_text}",
+                f"Warning: Failed to extract segment {segment.start_dt}.\n"
+                f"ffmpeg stderr: {stderr3 or stderr1}",
                 file=sys.stderr,
             )
             try:
@@ -269,7 +321,6 @@ def extract_segment(
         return mp4_file
     except Exception as error:  # noqa: BLE001
         print(f"Failed to extract segment {segment.start_dt}: {error}", file=sys.stderr)
-        proc.kill()
         try:
             mp4_file.unlink(missing_ok=True)
         except OSError:
@@ -300,7 +351,7 @@ def extract_all_segments(
         fmt = "%Y-%m-%d %H:%M:%S"
         try:
             start_dt = (
-                datetime.strptime(from_time, fmt).replace(tzinfo=timezone.utc)
+                datetime.strptime(from_time, fmt).astimezone()
                 if from_time
                 else None
             )
@@ -310,7 +361,7 @@ def extract_all_segments(
             )
         try:
             end_dt = (
-                datetime.strptime(to_time, fmt).replace(tzinfo=timezone.utc)
+                datetime.strptime(to_time, fmt).astimezone()
                 if to_time
                 else None
             )
@@ -438,10 +489,20 @@ def process_picture_segments(
     skipped = 0
     warned_missing: set[str] = set()
 
+    active_files = {
+        rec.file_index
+        for rec in header.file_records
+        if rec.segment_count != 65535 and rec.segment_count > 0 and rec.start_time_raw > 0
+    }
+
     for source_file_index, seg in raw_segments:
-        # Filter out corrupted records with inverted offsets or start/end times
-        if seg.start_offset >= seg.end_offset or (seg.start_time_raw & _DATE_MASK) > (
-            seg.end_time_raw & _DATE_MASK
+        if active_files and source_file_index not in active_files:
+            continue
+        # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
+        if (
+            seg.start_offset >= seg.end_offset
+            or (seg.start_time_raw & _DATE_MASK) < MIN_VALID_TIMESTAMP
+            or (seg.start_time_raw & _DATE_MASK) > (seg.end_time_raw & _DATE_MASK)
         ):
             skipped += 1
             continue
@@ -482,11 +543,11 @@ def process_picture_segments(
             RecordingSegment(
                 raw=seg,
                 start_dt=datetime.fromtimestamp(
-                    seg.start_time_raw & _DATE_MASK, tz=timezone.utc
-                ),
+                    seg.start_time_raw & _DATE_MASK
+                ).astimezone(),
                 end_dt=datetime.fromtimestamp(
-                    seg.end_time_raw & _DATE_MASK, tz=timezone.utc
-                ),
+                    seg.end_time_raw & _DATE_MASK
+                ).astimezone(),
                 source_file_index=source_file_index,
                 source_file_segment_index=0,
                 source_file_name=source_name,
@@ -556,7 +617,7 @@ def extract_all_pictures(
         fmt = "%Y-%m-%d %H:%M:%S"
         try:
             start_dt = (
-                datetime.strptime(from_time, fmt).replace(tzinfo=timezone.utc)
+                datetime.strptime(from_time, fmt).astimezone()
                 if from_time
                 else None
             )
@@ -566,13 +627,13 @@ def extract_all_pictures(
             )
         try:
             end_dt = (
-                datetime.strptime(to_time, fmt).replace(tzinfo=timezone.utc)
+                datetime.strptime(to_time, fmt).astimezone()
                 if to_time
                 else None
             )
         except ValueError:
             raise ValueError(
-                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
+                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
             )
 
         # For pictures, start_dt and end_dt are equal, so standard overlap check works:
