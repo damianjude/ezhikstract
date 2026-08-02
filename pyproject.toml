@@ -75,3 +75,6 @@ dev = [
   "hypothesis>=6.156.0",
   "pytest-cov>=7.1.0",
 ]
+
+[tool.mypy]
+ignore_missing_imports = true

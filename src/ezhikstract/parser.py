@@ -1,5 +1,5 @@
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Index file layout
 HEADER_BUFFER_LENGTH: int = 1280
@@ -27,11 +27,7 @@ class IndexHeader:
     cur_file_info: bytes  # see README.md
     unknown: bytes
     checksum: int
-    file_records: list[FileRecord] = None
-
-    def __post_init__(self) -> None:
-        if self.file_records is None:
-            self.file_records = []
+    file_records: list[FileRecord] = field(default_factory=list)
 
 
 @dataclass
