@@ -4,7 +4,7 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import imageio_ffmpeg
@@ -80,7 +80,9 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     active_files = {
         rec.file_index
         for rec in header.file_records
-        if rec.segment_count != 65535 and rec.segment_count > 0 and rec.start_time_raw > 0
+        if rec.segment_count != 65535
+        and rec.segment_count > 0
+        and rec.start_time_raw > 0
     }
 
     for source_file_index in range(header.av_files):
@@ -185,21 +187,25 @@ def _run_ffmpeg_extract(
     if include_audio and input_format == "mpeg":
         cmd.extend(["-c:a", "aac"])
 
-    cmd.extend([
-        "-i",
-        "pipe:0",
-        "-c:v",
-        "copy",
-        "-tag:v",
-        "hvc1",
-    ])
+    cmd.extend(
+        [
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "copy",
+            "-tag:v",
+            "hvc1",
+        ]
+    )
     if include_audio:
-        cmd.extend([
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "64k",
-        ])
+        cmd.extend(
+            [
+                "-c:a",
+                "libopus",
+                "-b:a",
+                "64k",
+            ]
+        )
     else:
         cmd.extend(["-an"])
     cmd.extend(["-y", str(mp4_file)])
@@ -225,7 +231,7 @@ def _run_ffmpeg_extract(
         proc.kill()
         try:
             _, stderr_bytes = proc.communicate(timeout=5)
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             stderr_bytes = b"FFmpeg process timed out"
         return_code = -1
     except (subprocess.SubprocessError, OSError) as error:
@@ -292,7 +298,7 @@ def extract_segment(
                 mp4_file.unlink(missing_ok=True)
             except OSError:
                 pass
-            success, stderr2 = _run_ffmpeg_extract(
+            success, _stderr2 = _run_ffmpeg_extract(
                 segment, camera_dir, mp4_file, input_format="mpeg", include_audio=False
             )
 
@@ -351,20 +357,14 @@ def extract_all_segments(
         fmt = "%Y-%m-%d %H:%M:%S"
         try:
             start_dt = (
-                datetime.strptime(from_time, fmt).astimezone()
-                if from_time
-                else None
+                datetime.strptime(from_time, fmt).astimezone() if from_time else None
             )
         except ValueError:
             raise ValueError(
                 f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
             )
         try:
-            end_dt = (
-                datetime.strptime(to_time, fmt).astimezone()
-                if to_time
-                else None
-            )
+            end_dt = datetime.strptime(to_time, fmt).astimezone() if to_time else None
         except ValueError:
             raise ValueError(
                 f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
@@ -492,7 +492,9 @@ def process_picture_segments(
     active_files = {
         rec.file_index
         for rec in header.file_records
-        if rec.segment_count != 65535 and rec.segment_count > 0 and rec.start_time_raw > 0
+        if rec.segment_count != 65535
+        and rec.segment_count > 0
+        and rec.start_time_raw > 0
     }
 
     for source_file_index, seg in raw_segments:
@@ -617,20 +619,14 @@ def extract_all_pictures(
         fmt = "%Y-%m-%d %H:%M:%S"
         try:
             start_dt = (
-                datetime.strptime(from_time, fmt).astimezone()
-                if from_time
-                else None
+                datetime.strptime(from_time, fmt).astimezone() if from_time else None
             )
         except ValueError:
             raise ValueError(
                 f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
             )
         try:
-            end_dt = (
-                datetime.strptime(to_time, fmt).astimezone()
-                if to_time
-                else None
-            )
+            end_dt = datetime.strptime(to_time, fmt).astimezone() if to_time else None
         except ValueError:
             raise ValueError(
                 f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
