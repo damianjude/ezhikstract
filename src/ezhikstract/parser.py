@@ -9,6 +9,12 @@ SEGMENT_RECORD_LENGTH_PIC: int = 96  # bytes per picture segment record
 MAX_SEGMENTS_PER_SOURCE_FILE: int = 256
 
 
+HEADER_STRUCT = struct.Struct("<QIIII1176s76sI")
+FILE_RECORD_STRUCT = struct.Struct("<IIII16x")
+SEGMENT_STRUCT = struct.Struct("<8xQQ16xII32x")
+PICTURE_SEGMENT_STRUCT = struct.Struct("<8xQQ16xII48x")
+
+
 @dataclass
 class FileRecord:
     file_index: int
@@ -49,7 +55,7 @@ def parse_index_header(data: bytes) -> IndexHeader:
         cur_file_info,
         unknown,
         checksum,
-    ) = struct.unpack("<QIIII1176s76sI", data)
+    ) = HEADER_STRUCT.unpack(data)
 
     return IndexHeader(
         modify_counter=modify_counter,
@@ -65,8 +71,8 @@ def parse_index_header(data: bytes) -> IndexHeader:
 
 def parse_file_record(data: bytes) -> FileRecord:
     """Parse one 32-byte per-file record in the index header area."""
-    file_index, segment_count, start_time_raw, end_time_raw = struct.unpack(
-        "<IIII16x", data
+    file_index, segment_count, start_time_raw, end_time_raw = FILE_RECORD_STRUCT.unpack(
+        data
     )
     return FileRecord(
         file_index=file_index,
@@ -78,8 +84,8 @@ def parse_file_record(data: bytes) -> FileRecord:
 
 def parse_segment(data: bytes) -> Segment:
     """Parse one 80-byte segment record from the index file."""
-    start_time_raw, end_time_raw, start_offset, end_offset = struct.unpack(
-        "<8xQQ16xII32x", data
+    start_time_raw, end_time_raw, start_offset, end_offset = SEGMENT_STRUCT.unpack(
+        data
     )
 
     return Segment(
@@ -92,8 +98,8 @@ def parse_segment(data: bytes) -> Segment:
 
 def parse_picture_segment(data: bytes) -> Segment:
     """Parse one 96-byte segment record from the picture index file."""
-    start_time_raw, end_time_raw, start_offset, end_offset = struct.unpack(
-        "<8xQQ16xII48x", data
+    start_time_raw, end_time_raw, start_offset, end_offset = (
+        PICTURE_SEGMENT_STRUCT.unpack(data)
     )
 
     return Segment(
@@ -140,16 +146,19 @@ def load_index(index_path: str) -> tuple[IndexHeader, list[Segment]]:
     # Segment table starts immediately after the header + the per-file records.
     offset = HEADER_BUFFER_LENGTH + header.av_files * FILE_RECORD_LENGTH
 
-    for _ in range(header.av_files):
-        # Prevent tight loops if corrupted header specifies too many files
-        if offset >= len(data):
-            break
-        for _ in range(MAX_SEGMENTS_PER_SOURCE_FILE):
-            if offset + SEGMENT_RECORD_LENGTH > len(data):
-                break
-            segment_data = data[offset : offset + SEGMENT_RECORD_LENGTH]
-            segments.append(parse_segment(segment_data))
-            offset += SEGMENT_RECORD_LENGTH
+    while offset + SEGMENT_RECORD_LENGTH <= len(data):
+        start_time_raw, end_time_raw, start_offset, end_offset = (
+            SEGMENT_STRUCT.unpack_from(data, offset)
+        )
+        segments.append(
+            Segment(
+                start_time_raw=start_time_raw,
+                end_time_raw=end_time_raw,
+                start_offset=start_offset,
+                end_offset=end_offset,
+            )
+        )
+        offset += SEGMENT_RECORD_LENGTH
 
     return header, segments
 
@@ -195,24 +204,31 @@ def load_picture_index(
     prev_end_offset = -1
 
     while offset + SEGMENT_RECORD_LENGTH_PIC <= len(data):
-        segment_data = data[offset : offset + SEGMENT_RECORD_LENGTH_PIC]
+        header_tag = data[offset : offset + 4]
+        if header_tag == b"\x00\x00\x00\x00" or header_tag == b"\xff\xff\xff\xff":
+            offset += SEGMENT_RECORD_LENGTH_PIC
+            continue
 
-        # Check for empty padding block which indicates end of valid segments
-        if (
-            segment_data[:4] == b"\x00\x00\x00\x00"
-            or segment_data[:4] == b"\xff\xff\xff\xff"
-        ):
-            break
+        start_time_raw, end_time_raw, start_offset, end_offset = (
+            PICTURE_SEGMENT_STRUCT.unpack_from(data, offset)
+        )
+        offset += SEGMENT_RECORD_LENGTH_PIC
 
-        segment = parse_picture_segment(segment_data)
-
-        if segment.end_offset != 0:
-            if prev_end_offset != -1 and segment.start_offset < prev_end_offset:
+        if end_offset != 0:
+            if prev_end_offset != -1 and start_offset < prev_end_offset:
                 current_file_idx += 1
 
-            segments.append((current_file_idx, segment))
-            prev_end_offset = segment.end_offset
-
-        offset += SEGMENT_RECORD_LENGTH_PIC
+            segments.append(
+                (
+                    current_file_idx,
+                    Segment(
+                        start_time_raw=start_time_raw,
+                        end_time_raw=end_time_raw,
+                        start_offset=start_offset,
+                        end_offset=end_offset,
+                    ),
+                )
+            )
+            prev_end_offset = end_offset
 
     return header, segments

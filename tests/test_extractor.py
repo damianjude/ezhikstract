@@ -71,6 +71,52 @@ def test_process_segments_missing_source_file(camera_dir: Path):
     assert len(segments) == 0
 
 
+def test_process_segments_unfinalized_active_file(tmp_path: Path):
+    """Ensure segments in active/unfinalized files (segment_count=0 in file_records) are still processed."""
+    import struct
+
+    from ezhikstract.parser import MAX_SEGMENTS_PER_SOURCE_FILE, SEGMENT_RECORD_LENGTH
+
+    cam_dir = tmp_path / "camera_active"
+    cam_dir.mkdir()
+
+    # 2 files total
+    num_files = 2
+    header_bytes = struct.pack(
+        "<QIIII1176s76sI",
+        1, 3, num_files, num_files, 1, b"\x00" * 1176, b"\x00" * 76, 0
+    )
+
+    # File 0 covers seg0, File 1 (active) covers seg1
+    rec0 = struct.pack("<IIII16x", 0, 5, 1672574000, 1672574408)
+    rec1 = struct.pack("<IIII16x", 1, 0, 0, 0)
+    file_records = rec0 + rec1
+
+    # Segment for File 0 (timestamp 1672574400, inside rec0 range)
+    seg0 = struct.pack("<8xQQ16xII32x", 1672574400, 1672574405, 0, 1024)
+    # Segment for File 1 (timestamp 1672580000, after rec0 range -> active file hiv00001)
+    seg1 = struct.pack("<8xQQ16xII32x", 1672580000, 1672580005, 0, 1024)
+
+    # Pad segments array up to 2 * MAX_SEGMENTS_PER_SOURCE_FILE
+    segments_bytes = seg0 + b"\x00" * (SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1))
+    segments_bytes += seg1 + b"\x00" * (SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1))
+
+    index_path = cam_dir / "index00.bin"
+    index_path.write_bytes(header_bytes + file_records + segments_bytes)
+
+    # Create video files for both
+    valid_mpeg = b"\x00\x00\x01\xba\x40" + b"\x00" * 100 + b"\x00\x00\x01\xbb" + b"\x00" * 2000
+    (cam_dir / "hiv00000.mp4").write_bytes(valid_mpeg)
+    (cam_dir / "hiv00001.mp4").write_bytes(valid_mpeg)
+
+    _, segments = process_segments(cam_dir)
+    assert len(segments) == 2
+    assert segments[0].source_file_name == "hiv00000.mp4"
+    assert segments[1].source_file_name == "hiv00001.mp4"
+
+
+
+
 def test_extract_segment_success(camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker):
     """Mock the subprocess Popen to simulate successful extraction."""
     _, segments = process_segments(camera_dir)
@@ -149,8 +195,8 @@ def test_extract_all_segments_time_filter(camera_dir: Path, tmp_path: Path, mock
     # Create two segments, manually bypassing parser for speed
     seg1 = RecordingSegment(
         raw=Segment(0, 0, 0, 0),
-        start_dt=datetime(2023, 1, 1, 12, 0, 0).astimezone(),
-        end_dt=datetime(2023, 1, 1, 12, 5, 0).astimezone(),
+        start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        end_dt=datetime(2023, 1, 1, 12, 5, 0, tzinfo=timezone.utc),
         source_file_index=0,
         source_file_segment_index=0,
         source_file_name="test.mp4",
@@ -187,18 +233,20 @@ def test_process_picture_segments(
     assert segments[0].source_file_name == "hiv00000.pic"
 
 
-def test_extract_picture_segment(tmp_path: Path, create_valid_pic):
-    """Pictures are extracted by slicing bytes directly."""
+def test_extract_picture_segment(tmp_path: Path):
+    """Pictures are extracted by slicing bytes directly and trimming SOI/EOI alignment padding."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
-    pic_path = create_valid_pic("hiv00000.pic", 200)
-    pic_path.rename(cam_dir / "hiv00000.pic")
+    
+    # Raw picture data with 4 leading padding bytes, JPEG payload (FF D8 ... FF D9), and 3 trailing padding bytes
+    raw_payload = b"\x00\x00\x00\x00\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9\x00\x00\x00"
+    (cam_dir / "hiv00000.pic").write_bytes(raw_payload)
 
     out_dir = tmp_path / "out"
 
     seg = RecordingSegment(
         raw=Segment(
-            start_time_raw=123, end_time_raw=123, start_offset=0, end_offset=100
+            start_time_raw=123, end_time_raw=123, start_offset=0, end_offset=len(raw_payload)
         ),
         start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         end_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
@@ -210,4 +258,8 @@ def test_extract_picture_segment(tmp_path: Path, create_valid_pic):
     result = extract_picture_segment(seg, cam_dir, out_dir, replace=True)
     assert result is not None
     assert result.exists()
-    assert result.stat().st_size == 100
+    
+    data = result.read_bytes()
+    assert data.startswith(b"\xff\xd8")
+    assert data.endswith(b"\xff\xd9")
+    assert len(data) == 22

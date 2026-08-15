@@ -2,10 +2,12 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import IO
 
 import imageio_ffmpeg
 
@@ -75,86 +77,92 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
 
     segments: list[RecordingSegment] = []
     skipped = 0
-    warned_missing: set[str] = set()
 
-    active_files = {
-        rec.file_index
-        for rec in header.file_records
-        if rec.segment_count != 65535
-        and rec.segment_count > 0
-        and rec.start_time_raw > 0
-    }
-
-    for source_file_index in range(header.av_files):
-        if active_files and source_file_index not in active_files:
+    for flat_idx, seg in enumerate(raw_segments):
+        if seg.end_time_raw == 0:
             continue
-        if source_file_index * MAX_SEGMENTS_PER_SOURCE_FILE >= len(raw_segments):
-            break
-        for source_file_segment_index in range(MAX_SEGMENTS_PER_SOURCE_FILE):
-            flat = (
-                source_file_index * MAX_SEGMENTS_PER_SOURCE_FILE
-                + source_file_segment_index
-            )
-            if flat >= len(raw_segments):
-                break
 
-            seg = raw_segments[flat]
-            if seg.end_time_raw == 0:
-                continue
+        # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
+        if (
+            seg.start_offset >= seg.end_offset
+            or (seg.start_time_raw & _DATE_MASK) < MIN_VALID_TIMESTAMP
+            or (seg.start_time_raw & _DATE_MASK) > (seg.end_time_raw & _DATE_MASK)
+        ):
+            skipped += 1
+            continue
 
-            # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
-            if (
-                seg.start_offset >= seg.end_offset
-                or (seg.start_time_raw & _DATE_MASK) < MIN_VALID_TIMESTAMP
-                or (seg.start_time_raw & _DATE_MASK) > (seg.end_time_raw & _DATE_MASK)
-            ):
-                skipped += 1
-                continue
+        seg_ts = seg.start_time_raw & _DATE_MASK
+        seg_dt = datetime.fromtimestamp(seg_ts, tz=timezone.utc)
+        logical_file_index = flat_idx // MAX_SEGMENTS_PER_SOURCE_FILE
+        source_file_segment_index = flat_idx % MAX_SEGMENTS_PER_SOURCE_FILE
 
-            source_name = f"hiv{source_file_index:05d}.mp4"
-            source_path = camera_dir / source_name
+        candidates: list[Path] = []
 
-            if not source_path.exists():
-                # Warn once per missing video file to avoid spamming output
-                if source_name not in warned_missing:
-                    print(
-                        f"Warning: Source file '{source_name}' does not exist. Skipping its segments.",
-                        file=sys.stderr,
-                    )
-                    warned_missing.add(source_name)
-                skipped += 1
-                continue
+        # 1. Match against binary FileRecords in index00.bin header
+        for rec in header.file_records:
+            if rec.start_time_raw > 0 and rec.end_time_raw > 0:
+                rec_s = rec.start_time_raw & _DATE_MASK
+                rec_e = rec.end_time_raw & _DATE_MASK
+                if (
+                    rec_s >= MIN_VALID_TIMESTAMP
+                    and rec_e >= rec_s
+                    and (rec_s - 600) <= seg_ts <= (rec_e + 600)
+                ):
+                    cand = camera_dir / f"hiv{rec.file_index:05d}.mp4"
+                    if cand.exists() and cand not in candidates:
+                        candidates.append(cand)
 
+        # 2. Check active container file (last_file_no)
+        if header.last_file_no >= 0:
+            act_cand = camera_dir / f"hiv{header.last_file_no:05d}.mp4"
+            if act_cand.exists() and act_cand not in candidates:
+                candidates.append(act_cand)
+
+        # 3. Fallback to logical file path and modulo path
+        log_path = camera_dir / f"hiv{logical_file_index:05d}.mp4"
+        if log_path.exists() and log_path not in candidates:
+            candidates.append(log_path)
+
+        if header.av_files > 0:
+            mod_path = camera_dir / f"hiv{logical_file_index % header.av_files:05d}.mp4"
+            if mod_path.exists() and mod_path not in candidates:
+                candidates.append(mod_path)
+
+        resolved_source_name: str | None = None
+        resolved_aligned_start: int | None = None
+
+        for cand_path in candidates:
             try:
-                if seg.end_offset > source_path.stat().st_size:
-                    skipped += 1
+                if seg.end_offset > cand_path.stat().st_size:
                     continue
             except OSError:
-                skipped += 1
                 continue
 
-            aligned_start = _find_mpeg_ps_start_offset(source_path, seg.start_offset)
-            if aligned_start is None:
-                skipped += 1
-                continue
+            aligned_start = _find_mpeg_ps_start_offset(cand_path, seg.start_offset)
+            if aligned_start is not None:
+                resolved_source_name = cand_path.name
+                resolved_aligned_start = aligned_start
+                break
 
-            seg.start_offset = aligned_start
+        if resolved_source_name is None or resolved_aligned_start is None:
+            skipped += 1
+            continue
 
-            # Apply date mask to extract lower 32-bit Unix epoch timestamp in local time
-            segments.append(
-                RecordingSegment(
-                    raw=seg,
-                    start_dt=datetime.fromtimestamp(
-                        seg.start_time_raw & _DATE_MASK
-                    ).astimezone(),
-                    end_dt=datetime.fromtimestamp(
-                        seg.end_time_raw & _DATE_MASK
-                    ).astimezone(),
-                    source_file_index=source_file_index,
-                    source_file_segment_index=source_file_segment_index,
-                    source_file_name=source_name,
-                )
+        seg.start_offset = resolved_aligned_start
+
+        # Apply date mask to extract lower 32-bit Unix epoch timestamp in UTC time
+        segments.append(
+            RecordingSegment(
+                raw=seg,
+                start_dt=seg_dt,
+                end_dt=datetime.fromtimestamp(
+                    seg.end_time_raw & _DATE_MASK, tz=timezone.utc
+                ),
+                source_file_index=logical_file_index,
+                source_file_segment_index=source_file_segment_index,
+                source_file_name=resolved_source_name,
             )
+        )
 
     segments.sort(key=lambda s: s.start_dt)  # sort by datetime
 
@@ -164,6 +172,36 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     print(summary)
 
     return header, segments
+
+
+def _feed_ffmpeg_stdin(
+    stdin: IO[bytes] | None,
+    source_path: Path,
+    start_offset: int,
+    length: int,
+) -> None:
+    """Stream segment data from disk into FFmpeg stdin pipe in 64KB chunks."""
+    if stdin is None:
+        return
+    chunk_size = 64 * 1024
+    remaining = length
+    try:
+        with open(source_path, "rb") as fh:
+            fh.seek(start_offset)
+            while remaining > 0:
+                to_read = min(remaining, chunk_size)
+                chunk = fh.read(to_read)
+                if not chunk:
+                    break
+                stdin.write(chunk)
+                remaining -= len(chunk)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            stdin.close()
+        except (OSError, ValueError):
+            pass
 
 
 def _run_ffmpeg_extract(
@@ -183,9 +221,6 @@ def _run_ffmpeg_extract(
     ]
     if input_format:
         cmd.extend(["-f", input_format])
-
-    if include_audio and input_format == "mpeg":
-        cmd.extend(["-c:a", "aac"])
 
     cmd.extend(
         [
@@ -210,13 +245,8 @@ def _run_ffmpeg_extract(
         cmd.extend(["-an"])
     cmd.extend(["-y", str(mp4_file)])
 
-    try:
-        source_path = camera_dir / segment.source_file_name
-        with open(source_path, "rb") as fh:
-            fh.seek(segment.raw.start_offset)
-            segment_data = fh.read(segment.raw.end_offset - segment.raw.start_offset)
-    except (OSError, ValueError) as error:
-        return False, f"Failed to read segment data: {error}"
+    source_path = camera_dir / segment.source_file_name
+    segment_len = segment.raw.end_offset - segment.raw.start_offset
 
     try:
         proc = subprocess.Popen(
@@ -225,7 +255,16 @@ def _run_ffmpeg_extract(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
-        _, stderr_bytes = proc.communicate(input=segment_data, timeout=30)
+
+        writer_thread = threading.Thread(
+            target=_feed_ffmpeg_stdin,
+            args=(proc.stdin, source_path, segment.raw.start_offset, segment_len),
+            daemon=True,
+        )
+        writer_thread.start()
+
+        _, stderr_bytes = proc.communicate(timeout=30)
+        writer_thread.join(timeout=5)
         return_code = proc.returncode
     except subprocess.TimeoutExpired:
         proc.kill()
@@ -357,14 +396,20 @@ def extract_all_segments(
         fmt = "%Y-%m-%d %H:%M:%S"
         try:
             start_dt = (
-                datetime.strptime(from_time, fmt).astimezone() if from_time else None
+                datetime.strptime(from_time, fmt).replace(tzinfo=timezone.utc)
+                if from_time
+                else None
             )
         except ValueError:
             raise ValueError(
                 f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
             )
         try:
-            end_dt = datetime.strptime(to_time, fmt).astimezone() if to_time else None
+            end_dt = (
+                datetime.strptime(to_time, fmt).replace(tzinfo=timezone.utc)
+                if to_time
+                else None
+            )
         except ValueError:
             raise ValueError(
                 f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
@@ -487,19 +532,8 @@ def process_picture_segments(
 
     segments: list[RecordingSegment] = []
     skipped = 0
-    warned_missing: set[str] = set()
-
-    active_files = {
-        rec.file_index
-        for rec in header.file_records
-        if rec.segment_count != 65535
-        and rec.segment_count > 0
-        and rec.start_time_raw > 0
-    }
 
     for source_file_index, seg in raw_segments:
-        if active_files and source_file_index not in active_files:
-            continue
         # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
         if (
             seg.start_offset >= seg.end_offset
@@ -509,50 +543,74 @@ def process_picture_segments(
             skipped += 1
             continue
 
-        source_name = f"hiv{source_file_index:05d}.pic"
-        source_path = camera_dir / source_name
+        seg_ts = seg.start_time_raw & _DATE_MASK
+        seg_dt = datetime.fromtimestamp(seg_ts, tz=timezone.utc)
 
-        if not source_path.exists():
-            if source_name not in warned_missing:
-                print(
-                    f"Warning: Source file '{source_name}' does not exist. Skipping its segments.",
-                    file=sys.stderr,
-                )
-                warned_missing.add(source_name)
-            skipped += 1
-            continue
+        candidates: list[Path] = []
 
-        try:
-            if seg.end_offset > source_path.stat().st_size:
-                skipped += 1
-                continue
-        except (OSError, ValueError):
-            skipped += 1
-            continue
+        # 1. Match against binary FileRecords in index00p.bin header
+        for rec in header.file_records:
+            if rec.start_time_raw > 0 and rec.end_time_raw > 0:
+                rec_s = rec.start_time_raw & _DATE_MASK
+                rec_e = rec.end_time_raw & _DATE_MASK
+                if (
+                    rec_s >= MIN_VALID_TIMESTAMP
+                    and rec_e >= rec_s
+                    and (rec_s - 600) <= seg_ts <= (rec_e + 600)
+                ):
+                    cand = camera_dir / f"hiv{rec.file_index:05d}.pic"
+                    if cand.exists() and cand not in candidates:
+                        candidates.append(cand)
 
-        try:
-            with open(source_path, "rb") as fh:
-                fh.seek(seg.start_offset)
-                magic = fh.read(3)
-                if magic != b"\xff\xd8\xff":
-                    skipped += 1
+        # 2. Check active container file (last_file_no)
+        if header.last_file_no >= 0:
+            act_cand = camera_dir / f"hiv{header.last_file_no:05d}.pic"
+            if act_cand.exists() and act_cand not in candidates:
+                candidates.append(act_cand)
+
+        # 3. Fallback to logical file path and modulo path
+        log_path = camera_dir / f"hiv{source_file_index:05d}.pic"
+        if log_path.exists() and log_path not in candidates:
+            candidates.append(log_path)
+
+        if header.av_files > 0:
+            mod_path = camera_dir / f"hiv{source_file_index % header.av_files:05d}.pic"
+            if mod_path.exists() and mod_path not in candidates:
+                candidates.append(mod_path)
+
+        resolved_source_name: str | None = None
+
+        for cand_path in candidates:
+            try:
+                if seg.end_offset > cand_path.stat().st_size:
                     continue
-        except (OSError, ValueError):
+            except (OSError, ValueError):
+                continue
+
+            try:
+                with open(cand_path, "rb") as fh:
+                    fh.seek(seg.start_offset)
+                    header_bytes = fh.read(16)
+                    if b"\xff\xd8" in header_bytes:
+                        resolved_source_name = cand_path.name
+                        break
+            except (OSError, ValueError):
+                continue
+
+        if resolved_source_name is None:
             skipped += 1
             continue
 
         segments.append(
             RecordingSegment(
                 raw=seg,
-                start_dt=datetime.fromtimestamp(
-                    seg.start_time_raw & _DATE_MASK
-                ).astimezone(),
+                start_dt=seg_dt,
                 end_dt=datetime.fromtimestamp(
-                    seg.end_time_raw & _DATE_MASK
-                ).astimezone(),
+                    seg.end_time_raw & _DATE_MASK, tz=timezone.utc
+                ),
                 source_file_index=source_file_index,
                 source_file_segment_index=0,
-                source_file_name=source_name,
+                source_file_name=resolved_source_name,
             )
         )
 
@@ -593,6 +651,17 @@ def extract_picture_segment(
         with open(camera_dir / segment.source_file_name, "rb") as fh:
             fh.seek(segment.raw.start_offset)
             raw = fh.read(segment.raw.end_offset - segment.raw.start_offset)
+
+        # Trim leading alignment padding up to JPEG SOI marker (0xFFD8)
+        soi_idx = raw.find(b"\xff\xd8")
+        if soi_idx != -1 and soi_idx > 0:
+            raw = raw[soi_idx:]
+
+        # Trim trailing alignment zero-padding past JPEG EOI marker (0xFFD9)
+        eoi_idx = raw.rfind(b"\xff\xd9")
+        if eoi_idx != -1:
+            raw = raw[: eoi_idx + 2]
+
         jpg_file.write_bytes(raw)
         return jpg_file
     except OSError as error:
@@ -619,17 +688,23 @@ def extract_all_pictures(
         fmt = "%Y-%m-%d %H:%M:%S"
         try:
             start_dt = (
-                datetime.strptime(from_time, fmt).astimezone() if from_time else None
+                datetime.strptime(from_time, fmt).replace(tzinfo=timezone.utc)
+                if from_time
+                else None
             )
         except ValueError:
             raise ValueError(
                 f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
             )
         try:
-            end_dt = datetime.strptime(to_time, fmt).astimezone() if to_time else None
+            end_dt = (
+                datetime.strptime(to_time, fmt).replace(tzinfo=timezone.utc)
+                if to_time
+                else None
+            )
         except ValueError:
             raise ValueError(
-                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
+                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
             )
 
         # For pictures, start_dt and end_dt are equal, so standard overlap check works:
