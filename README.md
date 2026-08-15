@@ -1,14 +1,14 @@
 # ezhikstract
 
-CLI tool to extract playable video from EZVIZ and Hikvision SD cards' proprietary round-robin storage format.
+`ezhikstract` is a command-line interface (CLI) tool. It extracts playable video and pictures from the proprietary round-robin storage format of EZVIZ and Hikvision SD cards.
 
-It works specifically with security camera or video doorbell SD cards that contain files named `hiv<xxxxx>.mp4` and an `index00.bin` metadata/index file. The tool parses the index file, validates video segments, extracts the raw MPEG-PS / HEVC streams, and remuxes them into standard `.mp4` containers, merging segments from the same day into a single daily video file formatted in your local timezone.
+The tool operates on SD cards from security cameras and video doorbells that contain `hiv<xxxxx>.mp4` files and an `index00.bin` index file. The tool parses the index file, validates video segments, extracts the raw MPEG-PS / HEVC streams, and remuxes them into standard `.mp4` containers. It also merges segments from the same day into one daily video file formatted with UTC timestamps.
 
-No full video re-encoding is performed; video streams (HEVC) are copied directly. Audio streams (AAC / PCM G.711) are transcoded to Opus to ensure broad compatibility with standard media players.
+The tool does not re-encode video. It copies HEVC video streams directly. It transcodes audio streams (AAC / PCM G.711) to Opus to make them compatible with standard media players.
 
 ## Installation
 
-Ensure you have Python 3.10 or higher installed. You can install the package directly:
+Make sure that you install Python 3.10 or higher. Install the package with pip:
 
 ```bash
 pip install ezhikstract
@@ -16,198 +16,197 @@ pip install ezhikstract
 
 ## Usage
 
-The CLI provides two primary command groups: `list` and `extract`. Both groups support operations on either `videos` or `pictures`.
+The CLI provides two primary command groups: `list` and `extract`. Both groups operate on `videos` or `pictures`.
 
 ### 1. The `list` Command Group
 
-Used to inspect valid records on the SD card without extracting any files. Timestamps are formatted in your system's local timezone.
+Use the `list` command group to inspect valid records on the SD card without file extraction. The tool formats timestamps in UTC (`YYYY-MM-DD HH:MM:SS`).
 
 #### Videos
-Lists all valid active video segments detected on the SD card.
+List all valid active video segments on the SD card:
 
 ```bash
 ezhikstract list videos INPUT_DIR
 ```
-* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00.bin` file.
+* `INPUT_DIR` (Mandatory): Root directory of the SD card that contains the `index00.bin` file.
 
 #### Pictures
-Lists all valid picture/thumbnail records detected on the SD card.
+List all valid picture and thumbnail records on the SD card:
 
 ```bash
 ezhikstract list pictures INPUT_DIR
 ```
-* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00p.bin` file.
+* `INPUT_DIR` (Mandatory): Root directory of the SD card that contains the `index00p.bin` file.
 
 ---
 
 ### 2. The `extract` Command Group
 
-Used to retrieve and process records from the SD card.
+Use the `extract` command group to extract and process records from the SD card.
 
 #### Videos
-Extracts raw video segments from active container files, filters them by timestamp if requested, remuxes/transcodes them into standard `.mp4` containers, and merges segments from the same calendar day into a single daily file named after the local start time (`DDMMYYYY HHMMSS.mp4`).
+Extract raw video segments from active container files. The command filters segments by timestamp if specified, remuxes them into standard `.mp4` containers, and merges segments from the same calendar day into one daily file. The file name uses the UTC start time format (`DDMMYYYY HHMMSS.mp4`).
 
 ```bash
 ezhikstract extract videos INPUT_DIR [OPTIONS]
 ```
-* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00.bin` file.
+* `INPUT_DIR` (Mandatory): Root directory of the SD card that contains the `index00.bin` file.
 
 **Options:**
-* `-o, --output PATH`: The output directory for the daily merged `.mp4` files. Default is `./recordings`.
-* `--from DATETIME`: Start time filter (inclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
-* `--to DATETIME`: End time filter (exclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
-* `--replace / --no-replace`: Overwrite existing files in the output directory. Default is `--replace`.
+* `-o, --output PATH`: Output directory for daily merged `.mp4` files. Default: `./recordings`.
+* `--from DATETIME`: Start time filter (inclusive) in UTC. Format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--to DATETIME`: End time filter (exclusive) in UTC. Format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--replace / --no-replace`: Overwrite existing files in the output directory. Default: `--replace`.
 
 #### Pictures
-Extracts raw snapshot thumbnails from picture container files, filters them by timestamp if requested, and writes them out as standard JPEG (`.jpg`) files named by local timestamp.
+Extract raw snapshot thumbnails from picture container files. The command filters items by timestamp if specified, and writes standard JPEG (`.jpg`) files named with the UTC timestamp.
 
 ```bash
 ezhikstract extract pictures INPUT_DIR [OPTIONS]
 ```
-* `INPUT_DIR` (Required): Root directory of the SD card containing the `index00p.bin` file.
+* `INPUT_DIR` (Mandatory): Root directory of the SD card that contains the `index00p.bin` file.
 
 **Options:**
-* `-o, --output PATH`: The output directory for the extracted `.jpg` files. Default is `./pictures`.
-* `--from DATETIME`: Start time filter (inclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
-* `--to DATETIME`: End time filter (exclusive) in local time, format: `"YYYY-MM-DD HH:MM:SS"`.
-* `--replace / --no-replace`: Overwrite existing files in the output directory. Default is `--replace`.
+* `-o, --output PATH`: Output directory for extracted `.jpg` files. Default: `./pictures`.
+* `--from DATETIME`: Start time filter (inclusive) in UTC. Format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--to DATETIME`: End time filter (exclusive) in UTC. Format: `"YYYY-MM-DD HH:MM:SS"`.
+* `--replace / --no-replace`: Overwrite existing files in the output directory. Default: `--replace`.
 
+## How It Works
 
-## How it Works
-
-The SD cards of these cameras use a pre-allocated round-robin storage file format:
-1. `index00.bin` (and the backup copy `index01.bin`) contains pointers, timestamps, offsets, per-file header records, and checksums for the recorded video segments.
-2. The video data is written to pre-allocated `hivxxxxx.mp4` files, which are all exactly 268.4 MB (as are the index files).
-3. `ezhikstract` parses the 32-byte per-file header records in `index00.bin` to filter out inactive / unwritten round-robin container files (`segment_count == 65535`).
+The camera SD cards use a pre-allocated round-robin storage format:
+1. The `index00.bin` file (and the backup `index01.bin` file) contains pointers, timestamps, offsets, header records, and checksums for recorded video segments.
+2. The system writes video data to pre-allocated `hivxxxxx.mp4` files. Each file has a fixed size of 268.4 MB (equal to the index files).
+3. `ezhikstract` parses the 32-byte per-file header records in `index00.bin`. It rejects unwritten round-robin container files (`segment_count == 65535`).
 4. It aligns segment start offsets past proprietary headers to the MPEG-PS / HEVC start codes (`0x000001`).
-5. It executes an intelligent 3-tier fallback extraction chain:
-   - **MPEG-PS + AAC/Opus**: Decodes MPEG-PS streams with AAC/PCM audio transcoded to Opus.
-   - **MPEG-PS Video-Only**: Falls back to video-only (`-an`) if audio headers are missing or corrupted.
+5. It uses a three-tier fallback extraction procedure:
+   - **MPEG-PS + AAC/Opus**: Decodes MPEG-PS streams and transcodes AAC/PCM audio to Opus.
+   - **MPEG-PS Video-Only**: Uses video-only extraction (`-an`) if audio headers are missing or invalid.
    - **Raw HEVC Stream**: Uses `-f hevc` if the segment is a raw Annex-B HEVC stream without container headers.
-6. Daily segments are grouped by local calendar day and concatenated using FFmpeg concat demuxer (`-map 0:v -map 0:a?`) to preserve audio wherever present.
+6. The tool groups segments by UTC calendar day and concatenates them with the FFmpeg concat demuxer (`-map 0:v -map 0:a?`) to keep audio when available.
 
 ## Architecture and Design Decisions
 
-The repository is built around several design choices to maintain clean separation, high performance, and robustness:
+The tool implements specific design choices for modularity, performance, and reliability:
 
-### 1. Stream-Piped Concurrency & Non-Blocking I/O
-* **Piped I/O**: Segments are read in memory chunks and passed to the standard input of `ffmpeg` subprocesses using `proc.communicate(input=segment_data, timeout=30)` to eliminate OS pipe deadlocks.
-* **Bounded Multithreading**: Uses a `ThreadPoolExecutor` to process segments in parallel. Concurrency limits are tuned to avoid high disk latency (limited to 4 workers for videos and 8 for pictures).
+### 1. Stream-Piped Concurrency and Non-Blocking I/O
+* **Piped I/O**: The tool reads segments into memory and passes them to the standard input of `ffmpeg` subprocesses using `proc.communicate(input=segment_data, timeout=30)`. This prevents operating system pipe deadlocks.
+* **Bounded Multithreading**: The tool uses a `ThreadPoolExecutor` to process segments in parallel. Concurrency limits prevent disk performance degradation (maximum 4 worker threads for video, 8 for pictures).
 
-### 2. Lossless Remuxing & Transcoding
-* **Video Quality**: Video streams (HEVC) are copied directly (`-c:v copy`) using the `-tag:v hvc1` format to ensure native, lossless rendering on iOS, macOS, and desktop media players.
-* **Audio Compatibility**: AAC / PCM G.711 audio tracks are transcoded on the fly to Opus (`-c:a libopus`), resolving compatibility issues without modifying the underlying video track.
-* **Concat Demuxer**: Uses the FFmpeg concat demuxer (`-f concat -map 0:v -map 0:a?`) to combine chronological daily segments into a single file. This is a stream-copy operation, meaning no full video re-encoding is executed.
+### 2. Lossless Remuxing and Transcoding
+* **Video Quality**: The tool copies HEVC video streams directly (`-c:v copy`) with the `-tag:v hvc1` format. This ensures lossless rendering on Apple platforms and standard media players.
+* **Audio Compatibility**: The tool transcodes AAC and PCM G.711 audio tracks to Opus (`-c:a libopus`) during extraction. This ensures playback compatibility without modification of the video stream.
+* **Concat Demuxer**: The tool combines daily segments into a single file with the FFmpeg concat demuxer (`-f concat -map 0:v -map 0:a?`). This operation copies streams directly without video re-encoding.
 
-### 3. Integrity and Validation
-* **Active Round-Robin Filtering**: Reads the per-file 32-byte header records in `index00.bin` to ignore unwritten round-robin files (`segment_count == 65535`), preventing stale clips from past recording cycles from being extracted.
-* **Dummy Timestamp Filtering**: Automatically discards zeroed / pre-2020 dummy segment slots (`start_time_raw < 1577836800`).
-* **MPEG-PS Validation**: Checks the first 2KB of each raw sector boundary for MPEG Program Stream start codes (`0x000001`). Any sectors corrupt from sudden power loss or circular buffer overwrites are ignored.
-* **JPEG Verification**: Validates the Start of Image (SOI) magic bytes (`0xFF 0xD8 0xFF`) for all picture/thumbnail files before parsing.
-* **Local Timezone Support**: Converts all timestamps using the system's local timezone (`.astimezone()`) so merged daily files correspond 100% to local calendar days.
+### 3. Data Integrity and Validation
+* **Round-Robin Filtering**: The tool reads 32-byte header records in `index00.bin` to ignore unwritten files (`segment_count == 65535`). This prevents extraction of old clips from previous recording cycles.
+* **Dummy Timestamp Filtering**: The tool rejects zeroed or invalid segment records with timestamps before the year 2020 (`start_time_raw < 1577836800`).
+* **MPEG-PS Validation**: The tool checks the first 2 KB of each sector for MPEG Program Stream start codes (`0x000001`). It ignores sectors damaged by sudden power loss or buffer overwrite.
+* **JPEG Verification**: The tool verifies the Start of Image (SOI) magic bytes (`0xFF 0xD8 0xFF`) before it processes picture files.
+* **UTC Time Zone Consistency**: The tool parses and formats all timestamps in UTC (`timezone.utc`).
 
 ## Storage Format
 
-The security camera SD cards (typically EZVIZ / Hikvision) use a pre-allocated, round-robin storage format. All files (`index00.bin`, `index01.bin`, and the video files `hivxxxxx.mp4`) are pre-allocated to the exact same size of 268.4 MB (281,444,352 bytes). The same pre-allocation strategy applies to the mobile app thumbnails (`index00p.bin` and `hivxxxxx.pic`).
+The camera SD cards use a pre-allocated round-robin storage format. All index and container files (`index00.bin`, `index01.bin`, `hivxxxxx.mp4`, `index00p.bin`, and `hivxxxxx.pic`) have a fixed pre-allocated size of 268.4 MB (281,444,352 bytes).
 
 ---
 
 ### Files
 
-1. **`index00.bin`**: The primary index file containing pointers, timestamps, offsets, and checksums for the recorded video segments.
-2. **`index01.bin`**: A redundant copy of `index00.bin` used for backup and reliability.
-3. **`hivxxxxx.mp4`**: Pre-allocated video containers (numbered from `hiv00000.mp4` upwards) containing segment-based raw MPEG-PS streams.
-4. **`index00p.bin`**: Metadata and index for the pictures/thumbnails used for mobile app push notifications (human/motion detection).
-5. **`hivxxxxx.pic`**: Pre-allocated picture containers (numbered from `hiv00000.pic` upwards) containing segment-based raw JPEG images.
+1. **`index00.bin`**: Primary index file that contains pointers, timestamps, offsets, and checksums for video segments.
+2. **`index01.bin`**: Backup copy of `index00.bin`.
+3. **`hivxxxxx.mp4`**: Pre-allocated video containers (numbered from `hiv00000.mp4` upward) that contain raw MPEG-PS streams.
+4. **`index00p.bin`**: Metadata and index for snapshot pictures and thumbnails.
+5. **`hivxxxxx.pic`**: Pre-allocated picture containers (numbered from `hiv00000.pic` upward) that contain raw JPEG images.
 
 ---
 
-### Index File Layout (`index00.bin` / `index00p.bin`)
+### Index File Structure (`index00.bin` / `index00p.bin`)
 
-An index file consists of:
+An index file contains three sections:
 1. A **1280-byte header** (`HEADER_BUFFER_LENGTH`).
-2. An array of **AV-File records** (each 32 bytes).
+2. An array of **AV-File records** (32 bytes per record).
 3. An array of **Segment records** (80 bytes for video, 96 bytes for pictures).
 
 #### 1. File Header (1280 Bytes)
 
-The first 1280 bytes of the index file contains general settings, the number of files, and state flags. Both `index00.bin` and `index00p.bin` share this exact structure.
+The first 1280 bytes of the index file contain configuration values, file counts, and status flags. `index00.bin` and `index00p.bin` use the same header structure.
 
 | Offset | Size (Bytes) | Field Name | Data Type | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `0` | `8` | `modify_counter` | `uint64_t` (LE) | Number of times the video segments have been modified. |
-| `8` | `4` | `index_version` | `uint32_t` (LE) | Version of the index file (typically `2` or `3`). |
-| `12` | `4` | `av_files` | `uint32_t` (LE) | Total number of pre-allocated `.mp4` or `.pic` files. |
-| `16` | `4` | `next_file_no` | `uint32_t` (LE) | File number (`xxxxx`) of the next file to be written. |
-| `20` | `4` | `last_file_no` | `uint32_t` (LE) | File number of the last recording stored. |
-| `24` | `1176` | `cur_file_info` | `bytes` | Info about the current file (includes timestamps, write progress, and padding). |
-| `1200` | `76` | `unknown` | `bytes` | Reserved padding. |
-| `1276` | `4` | `checksum` | `uint32_t` (LE) | Custom checksum for header validation (not standard CRC32). |
+| `0` | `8` | `modify_counter` | `uint64_t` (LE) | Modification count of the video segments. |
+| `8` | `4` | `index_version` | `uint32_t` (LE) | Version number of the index file (typically `2` or `3`). |
+| `12` | `4` | `av_files` | `uint32_t` (LE) | Total count of pre-allocated container files. |
+| `16` | `4` | `next_file_no` | `uint32_t` (LE) | Number (`xxxxx`) of the next file to write. |
+| `20` | `4` | `last_file_no` | `uint32_t` (LE) | Number of the most recently written file. |
+| `24` | `1176` | `cur_file_info` | `bytes` | Current file information, write progress, and padding. |
+| `1200` | `76` | `unknown` | `bytes` | Reserved padding bytes. |
+| `1276` | `4` | `checksum` | `uint32_t` (LE) | Header checksum value. |
 
 #### 2. AV-File Records Section
 
-Immediately following the header at offset `1280`, there is a contiguous array of AV-File records.
+The AV-File records section starts at offset `1280`:
 - **Record Size**: 32 bytes (`FILE_RECORD_LENGTH`).
-- **Total Records**: Equal to `av_files` from the header.
-- **Span**: Offset `1280` to `1280 + (av_files * 32)`.
-- **Note**: In `index00p.bin`, these blocks are primarily empty placeholder values (`0xffff...`).
+- **Total Records**: Value of `av_files` from the header.
+- **Byte Range**: Offset `1280` to `1280 + (av_files * 32)`.
+- **Note**: `index00p.bin` contains placeholder values (`0xffff...`) in these records.
 
 #### 3. Segment Records Section
 
-The segment records list begins directly after the AV-File records section.
+The segment records section starts immediately after the AV-File records section.
 
 ##### Video Segments (`index00.bin`)
-Each segment record is exactly **80 bytes** (`SEGMENT_RECORD_LENGTH`).
-For each pre-allocated video file, the index contains space for up to **256** segment entries (`MAX_SEGMENTS_PER_SOURCE_FILE`).
+Each video segment record is **80 bytes** (`SEGMENT_RECORD_LENGTH`).
+Each pre-allocated video file contains space for a maximum of **256** segment records (`MAX_SEGMENTS_PER_SOURCE_FILE`).
 
 | Offset | Size (Bytes) | Field Name | Data Type | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `0` | `8` | *Unused* | `bytes` | Contains `segmentType`, `status`, `reservedA`, and `resolution`. |
-| `8` | `8` | `start_time_raw` | `uint64_t` (LE) | Segment start timestamp. Lower 32 bits represent the Unix epoch. |
-| `16` | `8` | `end_time_raw` | `uint64_t` (LE) | Segment end timestamp. Lower 32 bits represent the Unix epoch. A value of `0` denotes an empty slot. |
+| `8` | `8` | `start_time_raw` | `uint64_t` (LE) | Segment start timestamp. Lower 32 bits contain the Unix epoch. |
+| `16` | `8` | `end_time_raw` | `uint64_t` (LE) | Segment end timestamp. Lower 32 bits contain the Unix epoch (`0` indicates an empty slot). |
 | `24` | `16` | *Unused* | `bytes` | Contains keyframe timestamps (`firstKeyFrameAbsTime`, etc.). |
-| `40` | `4` | `start_offset` | `uint32_t` (LE) | Start byte offset of this segment inside its `hivxxxxx.mp4` file. |
-| `44` | `4` | `end_offset` | `uint32_t` (LE) | End byte offset of this segment inside its `hivxxxxx.mp4` file. |
-| `48` | `32` | *Unused* | `bytes` | Reserved fields and metadata info segments. |
+| `40` | `4` | `start_offset` | `uint32_t` (LE) | Start byte offset of the segment in the `hivxxxxx.mp4` file. |
+| `44` | `4` | `end_offset` | `uint32_t` (LE) | End byte offset of the segment in the `hivxxxxx.mp4` file. |
+| `48` | `32` | *Unused* | `bytes` | Reserved metadata fields. |
 
 ##### Picture Segments (`index00p.bin`)
-Each segment record is exactly **96 bytes**. Unused segment slots are padded with zero bytes (`0x0000...`).
+Each picture segment record is **96 bytes**. Unused slots contain zero bytes (`0x0000...`).
 
 | Offset | Size (Bytes) | Field Name | Data Type | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `0` | `8` | `flags` | `bytes` | Type/Status flag for the segment (e.g. `0x0d00010000000000`). |
-| `8` | `8` | `start_time_raw` | `uint64_t` (LE) | Segment timestamp. Lower 32 bits represent the Unix epoch. |
-| `16` | `8` | `end_time_raw` | `uint64_t` (LE) | Segment end timestamp (usually matches `start_time_raw` for pictures). |
-| `24` | `16` | *Unused* | `bytes` | Reserved timestamp block. |
-| `40` | `4` | `start_offset` | `uint32_t` (LE) | Start byte offset of this segment inside its `hivxxxxx.pic` file. |
-| `44` | `4` | `end_offset` | `uint32_t` (LE) | End byte offset of this segment inside its `hivxxxxx.pic` file. |
-| `48` | `32` | `info` | `bytes` | Contains `INFO` string and related info offsets. |
-| `80` | `16` | `watermark` | `bytes` | ASCII camera ID/Watermark string appended at the end of the segment (e.g., `BK1721071`). |
+| `0` | `8` | `flags` | `bytes` | Segment status and type flags (e.g. `0x0d00010000000000`). |
+| `8` | `8` | `start_time_raw` | `uint64_t` (LE) | Picture timestamp. Lower 32 bits contain the Unix epoch. |
+| `16` | `8` | `end_time_raw` | `uint64_t` (LE) | End timestamp (typically equals `start_time_raw`). |
+| `24` | `16` | *Unused* | `bytes` | Reserved timestamp data. |
+| `40` | `4` | `start_offset` | `uint32_t` (LE) | Start byte offset in the `hivxxxxx.pic` file. |
+| `44` | `4` | `end_offset` | `uint32_t` (LE) | End byte offset in the `hivxxxxx.pic` file. |
+| `48` | `32` | `info` | `bytes` | Contains the `INFO` identifier and offset data. |
+| `80` | `16` | `watermark` | `bytes` | ASCII camera ID and watermark string (e.g. `BK1721071`). |
 
 ---
 
-### Media Container Structures
+### Media Container Formats
 
-#### Video File Structure (`hivxxxxx.mp4`)
+#### Video File Format (`hivxxxxx.mp4`)
 
-Despite the `.mp4` file extension, these files are not standard MP4 containers. Instead, they are pre-allocated byte blocks containing raw **MPEG Program Streams (MPEG-PS)**:
+These files contain raw **MPEG Program Streams (MPEG-PS)**:
 
 1. **Streams**:
    - **Video Codec**: HEVC (H.265).
-   - **Audio Codec**: PCM (G.711 A-law / `pcm_alaw`). *Note: Original recordings do not use AAC.*
+   - **Audio Codec**: PCM (G.711 A-law / `pcm_alaw`).
 2. **Segment Storage**:
-   - Multiple recordings are written sequentially into these containers, mapped by the offsets defined in the segment tables in `index00.bin`.
+   - The device writes segments sequentially into container files using offsets from `index00.bin`.
 3. **MPEG-PS Validation**:
-   - Valid segments start with the standard MPEG Program Stream Pack Start Code `0x000001BA` (with MPEG-2 marker prefix byte `0x40` at offset 4).
-   - A System Header sequence `0x000001BB` is present within the first 2KB of any valid segment.
-   - When a device is abruptly powered down or files are overwritten, segment blocks can become corrupted or partially written, which requires checking these magic bytes to prevent loading corrupt recordings.
+   - Valid segments begin with the standard Pack Start Code `0x000001BA` (with marker byte `0x40` at offset 4).
+   - A System Header sequence `0x000001BB` is present within the first 2 KB of each valid segment.
+   - Sudden power disconnection can cause invalid or incomplete sector data. The tool verifies these marker bytes to reject damaged records.
 
-#### Picture File Structure (`hivxxxxx.pic`)
+#### Picture File Format (`hivxxxxx.pic`)
 
-These files act identically to the `.mp4` files but are used exclusively for storing **raw JPEG images** (snapshots/thumbnails). 
+These files store **raw JPEG images** (snapshots and thumbnails):
 
 1. **Format**:
-   - Standard JPEG binary images containing SOI (Start of Image) magic bytes `0xFF 0xD8 0xFF`.
+   - Standard JPEG images containing Start of Image (SOI) marker bytes `0xFF 0xD8 0xFF`.
 2. **Segment Storage**:
-   - Successive snapshots are dumped sequentially into the 256.4 MB block.
-   - Offsets mapping to exact byte locations in the `.pic` block are found within `index00p.bin`.
+   - The device writes successive snapshot images sequentially into the 268.4 MB file.
+   - Byte offsets in `index00p.bin` locate each image in the `.pic` file.
