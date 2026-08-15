@@ -84,9 +84,7 @@ def parse_file_record(data: bytes) -> FileRecord:
 
 def parse_segment(data: bytes) -> Segment:
     """Parse one 80-byte segment record from the index file."""
-    start_time_raw, end_time_raw, start_offset, end_offset = SEGMENT_STRUCT.unpack(
-        data
-    )
+    start_time_raw, end_time_raw, start_offset, end_offset = SEGMENT_STRUCT.unpack(data)
 
     return Segment(
         start_time_raw=start_time_raw,
