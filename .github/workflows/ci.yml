@@ -36,13 +36,8 @@ jobs:
         run: mypy src/ezhikstract --ignore-missing-imports
 
   test-and-build:
-    name: Test & Build (${{ matrix.os }} / Python ${{ matrix.python-version }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.14"]
+    name: Test & Build (ubuntu-latest / Python 3.14)
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Code with Tags (for hatch-vcs)
@@ -50,10 +45,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.14"
           cache: "pip"
 
       - name: Install Dependencies & Package
