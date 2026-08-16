@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import imageio_ffmpeg  # type: ignore[import-untyped]
+import imageio_ffmpeg
 
 
 def merge_day(
@@ -41,39 +41,36 @@ def merge_day(
         escaped_path = f.resolve().as_posix().replace("'", "'\\''")
         lines.append(f"file '{escaped_path}'")
 
-    # Create temporary concat instruction file for ffmpeg
+    concat_list: Path | None = None
     try:
+        # Create temporary concat instruction file for ffmpeg
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
         ) as tmp:
             tmp.write("\n".join(lines))
             concat_list = Path(tmp.name)
-    except OSError as error:
-        print(f"Failed to create temporary concat file: {error}")
-        return None
 
-    # Stream-copy concatenate segment files without re-encoding
-    cmd = [
-        imageio_ffmpeg.get_ffmpeg_exe(),
-        "-loglevel",
-        "error",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        str(concat_list),
-        "-map",
-        "0:v",
-        "-map",
-        "0:a?",
-        "-c",
-        "copy",
-        "-y",
-        str(output_path),
-    ]
+        # Stream-copy concatenate segment files without re-encoding
+        cmd = [
+            imageio_ffmpeg.get_ffmpeg_exe(),
+            "-loglevel",
+            "error",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list),
+            "-map",
+            "0:v",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "-y",
+            str(output_path),
+        ]
 
-    try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         if result.stderr:
             # Avoid printing all standard logs of ffmpeg to avoid noise, but we can print it if there's any actual issue.
@@ -93,4 +90,5 @@ def merge_day(
             output_path.unlink(missing_ok=True)
         return None
     finally:
-        concat_list.unlink(missing_ok=True)
+        if concat_list is not None:
+            concat_list.unlink(missing_ok=True)

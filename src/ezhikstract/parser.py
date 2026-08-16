@@ -1,5 +1,6 @@
 import struct
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # Index file layout
 HEADER_BUFFER_LENGTH: int = 1280
@@ -108,7 +109,7 @@ def parse_picture_segment(data: bytes) -> Segment:
     )
 
 
-def load_index(index_path: str) -> tuple[IndexHeader, list[Segment]]:
+def load_index(index_path: str | Path) -> tuple[IndexHeader, list[Segment]]:
     """
     Read and parse an index00.bin file.
 
@@ -129,22 +130,28 @@ def load_index(index_path: str) -> tuple[IndexHeader, list[Segment]]:
     # Parse per-file 32-byte records from header area
     file_records: list[FileRecord] = []
     file_rec_offset = HEADER_BUFFER_LENGTH
-    for _ in range(header.av_files):
-        if file_rec_offset + FILE_RECORD_LENGTH <= len(data):
-            file_records.append(
-                parse_file_record(
-                    data[file_rec_offset : file_rec_offset + FILE_RECORD_LENGTH]
-                )
+    max_possible_records = max(
+        0, (len(data) - HEADER_BUFFER_LENGTH) // FILE_RECORD_LENGTH
+    )
+    num_records = min(header.av_files, max_possible_records)
+    for _ in range(num_records):
+        file_records.append(
+            parse_file_record(
+                data[file_rec_offset : file_rec_offset + FILE_RECORD_LENGTH]
             )
-            file_rec_offset += FILE_RECORD_LENGTH
+        )
+        file_rec_offset += FILE_RECORD_LENGTH
     header.file_records = file_records
 
     segments: list[Segment] = []
 
     # Segment table starts immediately after the header + the per-file records.
     offset = HEADER_BUFFER_LENGTH + header.av_files * FILE_RECORD_LENGTH
+    max_segments = header.av_files * MAX_SEGMENTS_PER_SOURCE_FILE
 
-    while offset + SEGMENT_RECORD_LENGTH <= len(data):
+    for _ in range(max_segments):
+        if offset + SEGMENT_RECORD_LENGTH > len(data):
+            break
         start_time_raw, end_time_raw, start_offset, end_offset = (
             SEGMENT_STRUCT.unpack_from(data, offset)
         )
@@ -162,7 +169,7 @@ def load_index(index_path: str) -> tuple[IndexHeader, list[Segment]]:
 
 
 def load_picture_index(
-    index_path: str,
+    index_path: str | Path,
 ) -> tuple[IndexHeader, list[tuple[int, Segment]]]:
     """
     Read and parse an index00p.bin file.
@@ -183,14 +190,17 @@ def load_picture_index(
     # Parse per-file 32-byte records from header area
     file_records: list[FileRecord] = []
     file_rec_offset = HEADER_BUFFER_LENGTH
-    for _ in range(header.av_files):
-        if file_rec_offset + FILE_RECORD_LENGTH <= len(data):
-            file_records.append(
-                parse_file_record(
-                    data[file_rec_offset : file_rec_offset + FILE_RECORD_LENGTH]
-                )
+    max_possible_records = max(
+        0, (len(data) - HEADER_BUFFER_LENGTH) // FILE_RECORD_LENGTH
+    )
+    num_records = min(header.av_files, max_possible_records)
+    for _ in range(num_records):
+        file_records.append(
+            parse_file_record(
+                data[file_rec_offset : file_rec_offset + FILE_RECORD_LENGTH]
             )
-            file_rec_offset += FILE_RECORD_LENGTH
+        )
+        file_rec_offset += FILE_RECORD_LENGTH
     header.file_records = file_records
 
     segments: list[tuple[int, Segment]] = []
@@ -204,15 +214,14 @@ def load_picture_index(
     while offset + SEGMENT_RECORD_LENGTH_PIC <= len(data):
         header_tag = data[offset : offset + 4]
         if header_tag == b"\x00\x00\x00\x00" or header_tag == b"\xff\xff\xff\xff":
-            offset += SEGMENT_RECORD_LENGTH_PIC
-            continue
+            break
 
         start_time_raw, end_time_raw, start_offset, end_offset = (
             PICTURE_SEGMENT_STRUCT.unpack_from(data, offset)
         )
         offset += SEGMENT_RECORD_LENGTH_PIC
 
-        if end_offset != 0:
+        if end_offset != 0 and start_offset < end_offset:
             if prev_end_offset != -1 and start_offset < prev_end_offset:
                 current_file_idx += 1
 

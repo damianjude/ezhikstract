@@ -190,3 +190,64 @@ def test_load_picture_index_terminates_on_padding(tmp_path: Path):
 
     # Should only read the first segment, returning lengths of 1
     assert len(segments_res) == 1
+
+
+def test_load_picture_index_corrupt_offset_prevents_file_index_drift(tmp_path: Path):
+    """Corrupted segments with inverted offsets should not cause subsequent valid segments to drift in file index."""
+    index_path = tmp_path / "index00p.bin"
+
+    header = struct.pack(
+        "<QIIII1176s76sI", 1, 3, 1, 1, 0, b"\x00" * 1176, b"\x00" * 76, 0
+    )
+    file_record = b"\x00" * FILE_RECORD_LENGTH
+    time_val = 1234567890
+
+    # Valid seg 1 (offset 0 -> 100)
+    seg1 = struct.pack(
+        "<4s4xQQ16xII48x", b"\x01\x02\x03\x04", time_val, time_val, 0, 100
+    )
+    # Corrupt seg 2 with inverted offsets (offset 80 -> 20)
+    seg2 = struct.pack(
+        "<4s4xQQ16xII48x", b"\x01\x02\x03\x04", time_val, time_val, 80, 20
+    )
+    # Valid seg 3 (offset 100 -> 200) in the same file
+    seg3 = struct.pack(
+        "<4s4xQQ16xII48x", b"\x01\x02\x03\x04", time_val, time_val, 100, 200
+    )
+
+    index_path.write_bytes(header + file_record + seg1 + seg2 + seg3)
+
+    # Path object should be accepted directly
+    _, segments_res = load_picture_index(index_path)
+
+    assert len(segments_res) == 2
+    assert segments_res[0][0] == 0
+    assert segments_res[0][1].start_offset == 0
+    assert segments_res[1][0] == 0
+    assert segments_res[1][1].start_offset == 100
+
+
+def test_load_index_bounded_by_av_files(tmp_path: Path):
+    """load_index should not read past av_files * MAX_SEGMENTS_PER_SOURCE_FILE even in huge files."""
+    from ezhikstract.parser import MAX_SEGMENTS_PER_SOURCE_FILE
+
+    index_path = tmp_path / "index00.bin"
+    # Header with av_files = 1
+    header = struct.pack(
+        "<QIIII1176s76sI", 1, 3, 1, 1, 0, b"\x00" * 1176, b"\x00" * 76, 0
+    )
+    file_record = b"\x00" * FILE_RECORD_LENGTH
+    # 256 valid segments for file 0
+    seg_bytes = b""
+    for i in range(MAX_SEGMENTS_PER_SOURCE_FILE):
+        seg_bytes += struct.pack(
+            "<8xQQ16xII32x", 1672574000 + i, 1672574010 + i, i * 1000, (i + 1) * 1000
+        )
+    # Extra trailing dummy data (simulating large 32MB file)
+    extra_bytes = b"\x55" * (SEGMENT_RECORD_LENGTH * 1000)
+
+    index_path.write_bytes(header + file_record + seg_bytes + extra_bytes)
+
+    header_res, segments_res = load_index(index_path)
+    assert header_res.av_files == 1
+    assert len(segments_res) == MAX_SEGMENTS_PER_SOURCE_FILE

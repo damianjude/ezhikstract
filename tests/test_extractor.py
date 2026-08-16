@@ -22,6 +22,7 @@ from ezhikstract.extractor import (
     extract_all_segments,
     extract_picture_segment,
     extract_segment,
+    parse_time_filters,
     process_picture_segments,
     process_segments,
 )
@@ -57,7 +58,7 @@ def test_process_segments(camera_dir: Path):
     """Given a valid camera directory, process_segments should discover available videos."""
     header, segments = process_segments(camera_dir)
     assert header.av_files == 1
-    assert len(segments) == 1
+    assert len(segments) == 2
     assert segments[0].source_file_name == "hiv00000.mp4"
     # Ensure it's parsed as datetime
     assert isinstance(segments[0].start_dt, datetime)
@@ -129,36 +130,30 @@ def test_process_segments_unfinalized_active_file(tmp_path: Path):
 
 
 def test_extract_segment_success(camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker):
-    """Mock the subprocess Popen to simulate successful extraction."""
+    """Mock subprocess.run to simulate successful extraction."""
     _, segments = process_segments(camera_dir)
     segment = segments[0]
 
-    # Mock Popen
-    mock_proc = mocker.MagicMock()
-    mock_proc.returncode = 0
-    mock_proc.communicate.return_value = (b"", b"")
-    mock_popen = mocker.patch("subprocess.Popen", return_value=mock_proc)
-
     out_dir = tmp_path / "out"
 
-    # Ensure side-effect of creating output file when Popen is called
-    def _side_effect(*args, **kwargs):
+    def mock_run(cmd, input, stdout, stderr, **kwargs):
         # Create output file so stat().st_size > 0 passes
-        s_str = segment.start_dt.strftime("%d%m%Y %H%M%S")
-        e_str = segment.end_dt.strftime("%d%m%Y %H%M%S")
-        stem = f"{s_str} - {e_str} ({segment.source_file_index:05d}-{segment.source_file_segment_index:03d})"
-        mp4 = out_dir / f"{stem}.mp4"
-        mp4.write_bytes(b"\x00" * 100)
-        return mock_proc
+        mp4_out = Path(cmd[-1])
+        mp4_out.parent.mkdir(parents=True, exist_ok=True)
+        mp4_out.write_bytes(b"\x00" * 100)
+        res = mocker.MagicMock()
+        res.returncode = 0
+        res.stderr = b""
+        return res
 
-    mock_popen.side_effect = _side_effect
+    mock_sub_run = mocker.patch("subprocess.run", side_effect=mock_run)
 
     result = extract_segment(segment, camera_dir, out_dir, replace=True)
 
     assert result is not None
     assert result.parent == out_dir
     assert result.suffix == ".mp4"
-    mock_popen.assert_called()
+    mock_sub_run.assert_called()
 
 
 def test_extract_segment_ffmpeg_failure(
@@ -168,10 +163,10 @@ def test_extract_segment_ffmpeg_failure(
     _, segments = process_segments(camera_dir)
     segment = segments[0]
 
-    mock_proc = mocker.MagicMock()
-    mock_proc.returncode = 1
-    mock_proc.communicate.return_value = (b"Error parsing stream", b"")
-    mocker.patch("subprocess.Popen", return_value=mock_proc)
+    mock_res = mocker.MagicMock()
+    mock_res.returncode = 1
+    mock_res.stderr = b"Error parsing stream"
+    mocker.patch("subprocess.run", return_value=mock_res)
 
     out_dir = tmp_path / "out"
     result = extract_segment(segment, camera_dir, out_dir, replace=True)
@@ -197,7 +192,7 @@ def test_extract_all_segments(camera_dir: Path, tmp_path: Path, mock_ffmpeg, moc
     out_dir = tmp_path / "recordings"
     extract_all_segments(segments, camera_dir, output_dir=out_dir)
 
-    mock_extract_segment.assert_called_once()
+    assert mock_extract_segment.call_count == len(segments)
     mock_merge.assert_called_once()
 
 
@@ -277,3 +272,67 @@ def test_extract_picture_segment(tmp_path: Path):
     assert data.startswith(b"\xff\xd8")
     assert data.endswith(b"\xff\xd9")
     assert len(data) == 22
+
+
+def test_parse_time_filters():
+    """parse_time_filters should parse valid UTC timestamps and raise ValueError on invalid ones."""
+    import pytest
+
+    s, e = parse_time_filters(None, None)
+    assert s is None and e is None
+
+    s, e = parse_time_filters("2023-01-01 10:00:00", "2023-01-01 12:00:00")
+    assert s == datetime(2023, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    assert e == datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    with pytest.raises(ValueError, match="Invalid --from time format"):
+        parse_time_filters("invalid", None)
+
+    with pytest.raises(ValueError, match="Invalid --to time format"):
+        parse_time_filters(None, "invalid")
+
+
+def test_extract_segment_aligns_mpeg_ps_start(tmp_path: Path, mocker):
+    """extract_segment should detect and align to 0x000001 start code within leading padding."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+    out_dir = tmp_path / "out"
+
+    # Segment data with 12 bytes of proprietary header preceding MPEG-PS start code
+    prefix = b"\xaa\xbb\xcc\xdd" * 3
+    mpeg_ps = b"\x00\x00\x01\xba\x40" + b"\x00" * 100
+    (cam_dir / "hiv00000.mp4").write_bytes(prefix + mpeg_ps)
+
+    seg = RecordingSegment(
+        raw=Segment(
+            start_time_raw=1672574400,
+            end_time_raw=1672574405,
+            start_offset=0,
+            end_offset=len(prefix + mpeg_ps),
+        ),
+        start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        end_dt=datetime(2023, 1, 1, 12, 0, 5, tzinfo=timezone.utc),
+        source_file_index=0,
+        source_file_segment_index=0,
+        source_file_name="hiv00000.mp4",
+    )
+
+    captured_inputs = []
+
+    def mock_run(cmd, input, stdout, stderr, **kwargs):
+        captured_inputs.append(input)
+        res = mocker.MagicMock()
+        res.returncode = 0
+        res.stderr = b""
+        # Write output file
+        mp4_out = Path(cmd[-1])
+        mp4_out.write_bytes(b"\x00" * 50)
+        return res
+
+    mocker.patch("subprocess.run", side_effect=mock_run)
+
+    result = extract_segment(seg, cam_dir, out_dir, replace=True)
+    assert result is not None
+    assert len(captured_inputs) == 1
+    # Verify the input was aligned (starts with 0x000001)
+    assert captured_inputs[0].startswith(b"\x00\x00\x01\xba\x40")

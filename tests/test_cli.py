@@ -85,3 +85,31 @@ def test_cli_extract_pictures(tmp_path: Path, mocker):
     assert result.exit_code == 0
     mock_process.assert_called_once_with(cam_dir)
     mock_extract.assert_called_once()
+
+
+def test_cli_extract_videos_invalid_time(tmp_path: Path):
+    """An invalid --from or --to format should fail immediately before processing segments."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+
+    result = runner.invoke(
+        app,
+        ["extract", "videos", str(cam_dir), "--from", "invalid-date-format"],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid --from time format" in result.stderr
+
+
+def test_cli_extract_pictures_invalid_time(tmp_path: Path):
+    """An invalid --from or --to format in extract pictures should fail immediately."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+
+    result = runner.invoke(
+        app,
+        ["extract", "pictures", str(cam_dir), "--to", "invalid-date-format"],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid --to time format" in result.stderr

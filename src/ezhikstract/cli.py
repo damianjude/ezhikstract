@@ -117,10 +117,11 @@ def extract_videos(
     Extract video recording segments from an EZVIZ / Hikvision SD card to .mp4 files,
     merging each day's segments into a single file named by start time (DDMMYYYY HHMMSS.mp4).
     """
-    from .extractor import extract_all_segments, process_segments
+    from .extractor import extract_all_segments, parse_time_filters, process_segments
 
     # Extract all matching video segments and merge them daily
     try:
+        parse_time_filters(from_time, to_time)
         output_dir = output_dir.expanduser().resolve()
         _, segments = process_segments(input_dir)
         extract_all_segments(
@@ -183,10 +184,15 @@ def extract_pictures(
     """
     Extract picture segments from an EZVIZ / Hikvision SD card to .jpg files.
     """
-    from .extractor import extract_all_pictures, process_picture_segments
+    from .extractor import (
+        extract_all_pictures,
+        parse_time_filters,
+        process_picture_segments,
+    )
 
     # Extract picture segments and write them as JPEG files
     try:
+        parse_time_filters(from_time, to_time)
         output_dir = output_dir.expanduser().resolve()
         _, segments = process_picture_segments(input_dir)
         extract_all_pictures(
