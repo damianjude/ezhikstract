@@ -34,7 +34,7 @@ class IndexHeader:
     cur_file_info: bytes  # see README.md
     unknown: bytes
     checksum: int
-    file_records: list[FileRecord] = field(default_factory=list)
+    file_records: list[FileRecord] = field(default_factory=list)  # pyright: ignore[reportUnknownVariableType]
 
 
 @dataclass

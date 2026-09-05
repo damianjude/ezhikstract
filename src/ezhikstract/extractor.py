@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import imageio_ffmpeg
+import imageio_ffmpeg  # pyright: ignore[reportMissingTypeStubs]
 
 from .parser import (
     MAX_SEGMENTS_PER_SOURCE_FILE,
@@ -55,7 +55,7 @@ def _find_mpeg_ps_start_offset(path: Path, offset: int) -> int | None:
     return None
 
 
-def _is_valid_mpeg_ps(path: Path, offset: int) -> bool:
+def is_valid_mpeg_ps(path: Path, offset: int) -> bool:
     """Check if an MPEG Program Stream Start Code (0x000001) exists within 2KB of offset."""
     return _find_mpeg_ps_start_offset(path, offset) is not None
 
@@ -116,7 +116,7 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     ]
 
     try:
-        existing_files = {p.name for p in camera_dir.iterdir() if p.is_file()}
+        existing_files: set[str] = {p.name for p in camera_dir.iterdir() if p.is_file()}
     except OSError:
         existing_files = set()
 
@@ -379,7 +379,12 @@ def extract_all_segments(
 
     Time filters use "YYYY-MM-DD HH:MM:SS" format (UTC).
     """
-    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+    from rich.progress import (
+        BarColumn,  # pyright: ignore[reportMissingTypeStubs]
+        Progress,
+        TextColumn,
+        TimeRemainingColumn,
+    )
 
     from .merger import merge_day  # local import avoids circular dependency
 
@@ -503,7 +508,7 @@ def process_picture_segments(
     skipped = 0
 
     try:
-        existing_files = {p.name for p in camera_dir.iterdir() if p.is_file()}
+        existing_files: set[str] = {p.name for p in camera_dir.iterdir() if p.is_file()}
     except OSError:
         existing_files = set()
 
@@ -605,7 +610,12 @@ def extract_all_pictures(
     output_dir: Path = Path("extracted"),
     replace: bool = True,
 ) -> None:
-    from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
+    from rich.progress import (
+        BarColumn,  # pyright: ignore[reportMissingTypeStubs]
+        Progress,
+        TextColumn,
+        TimeRemainingColumn,
+    )
 
     start_dt, end_dt = parse_time_filters(from_time, to_time)
     # For pictures, start_dt and end_dt are equal, so standard overlap check works:

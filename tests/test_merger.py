@@ -14,16 +14,19 @@ Important edge cases:
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
+
+from pytest_mock import MockerFixture
 
 from ezhikstract.merger import merge_day
 
 
-def test_merge_day_empty_list():
+def test_merge_day_empty_list() -> None:
     """Merging an empty list should immediately return None."""
     assert merge_day([], Path("out.mp4")) is None
 
 
-def test_merge_day_no_replace(tmp_path: Path):
+def test_merge_day_no_replace(tmp_path: Path) -> None:
     """If the output file exists and replace=False, it should return the path without doing anything."""
     out_file = tmp_path / "out.mp4"
     out_file.touch()
@@ -32,9 +35,11 @@ def test_merge_day_no_replace(tmp_path: Path):
     assert merge_day([tmp_path / "segment.mp4"], out_file, replace=False) == out_file
 
 
-def test_merge_day_success(tmp_path: Path, mock_ffmpeg, mocker):
+def test_merge_day_success(
+    tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
+) -> None:
     """A successful merge should call subprocess.run and return the output path."""
-    mock_run = mocker.patch("subprocess.run")
+    mock_run: MagicMock = mocker.patch("subprocess.run")
 
     seg1 = tmp_path / "seg1.mp4"
     seg1.touch()
@@ -50,10 +55,12 @@ def test_merge_day_success(tmp_path: Path, mock_ffmpeg, mocker):
     # In integration the Python garbage collector or finally block will delete it.
 
 
-def test_merge_day_subprocess_failure(tmp_path: Path, mock_ffmpeg, mocker):
+def test_merge_day_subprocess_failure(
+    tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
+) -> None:
     """If ffmpeg fails with a non-zero exit code, it should handle the exception and return None."""
     # Simulate a subprocess failure
-    mock_run = mocker.patch(
+    mock_run: MagicMock = mocker.patch(
         "subprocess.run",
         side_effect=subprocess.CalledProcessError(1, cmd="ffmpeg", stderr="error"),
     )
@@ -67,7 +74,9 @@ def test_merge_day_subprocess_failure(tmp_path: Path, mock_ffmpeg, mocker):
     mock_run.assert_called_once()
 
 
-def test_merge_day_escapes_filenames(tmp_path: Path, mock_ffmpeg, mocker):
+def test_merge_day_escapes_filenames(
+    tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
+) -> None:
     """Filenames with single quotes should be escaped correctly in the ffmpeg concat file."""
     # Create an actual file, capture tempfile generation
     mocker.patch("subprocess.run")

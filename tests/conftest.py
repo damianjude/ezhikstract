@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from pytest_mock import MockerFixture
 
 # Size constants from parser.py
 HEADER_BUFFER_LENGTH = 1280
@@ -140,24 +141,28 @@ def create_valid_pic(tmp_path: Path) -> Callable[[str, int], Path]:
 
 
 @pytest.fixture
-def camera_dir(tmp_path: Path, create_valid_index00, create_valid_mpeg_ps) -> Path:
+def camera_dir(
+    tmp_path: Path,
+    create_valid_index00: Callable[..., Path],
+    create_valid_mpeg_ps: Callable[..., Path],
+) -> Path:
     """Fixture providing a realistic SD card camera directory."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
     # Generate index00.bin
     create_valid_index00.__defaults__ = (1, 2)  # 1 av_file, 2 segments
-    index_path = create_valid_index00()
+    index_path: Path = create_valid_index00()
     index_path.rename(cam_dir / "index00.bin")
 
     # Generate matching hiv00000.mp4
-    mpeg_path = create_valid_mpeg_ps("hiv00000.mp4", 4096)
+    mpeg_path: Path = create_valid_mpeg_ps("hiv00000.mp4", 4096)
     mpeg_path.rename(cam_dir / "hiv00000.mp4")
 
     return cam_dir
 
 
 @pytest.fixture
-def mock_ffmpeg(mocker):
+def mock_ffmpeg(mocker: MockerFixture) -> None:
     """Mocks imageio_ffmpeg.get_ffmpeg_exe and prevents subprocess execution."""
     mocker.patch("imageio_ffmpeg.get_ffmpeg_exe", return_value="/mock/bin/ffmpeg")

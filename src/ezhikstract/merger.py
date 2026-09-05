@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import imageio_ffmpeg
+import imageio_ffmpeg  # pyright: ignore[reportMissingTypeStubs]
 
 
 def merge_day(

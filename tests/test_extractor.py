@@ -15,13 +15,17 @@ Important edge cases:
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
+from unittest.mock import MagicMock
+
+from pytest_mock import MockerFixture
 
 from ezhikstract.extractor import (
     RecordingSegment,
-    _is_valid_mpeg_ps,
     extract_all_segments,
     extract_picture_segment,
     extract_segment,
+    is_valid_mpeg_ps,
     parse_time_filters,
     process_picture_segments,
     process_segments,
@@ -29,32 +33,34 @@ from ezhikstract.extractor import (
 from ezhikstract.parser import Segment
 
 
-def test_is_valid_mpeg_ps(tmp_path: Path, create_valid_mpeg_ps):
+def test_is_valid_mpeg_ps(
+    tmp_path: Path, create_valid_mpeg_ps: Callable[..., Path]
+) -> None:
     """Valid and invalid MPEG headers should be recognized."""
     # Valid with system header
-    valid_file = create_valid_mpeg_ps("valid.mp4")
-    assert _is_valid_mpeg_ps(valid_file, offset=0) is True
+    valid_file: Path = create_valid_mpeg_ps("valid.mp4")
+    assert is_valid_mpeg_ps(valid_file, offset=0) is True
 
     # Valid MPEG-PS Pack Header (0x000001BA + 0x40) WITHOUT System Header (0x000001BB)
     valid_no_sys = tmp_path / "valid_no_sys.mp4"
     valid_no_sys.write_bytes(b"\x00\x00\x01\xba\x40" + b"\x00" * 100)
-    assert _is_valid_mpeg_ps(valid_no_sys, offset=0) is True
+    assert is_valid_mpeg_ps(valid_no_sys, offset=0) is True
 
     # Invalid (missing marker)
     invalid_file = tmp_path / "invalid.mp4"
     invalid_file.write_bytes(b"\x00" * 2048)
-    assert _is_valid_mpeg_ps(invalid_file, offset=0) is False
+    assert is_valid_mpeg_ps(invalid_file, offset=0) is False
 
     # Invalid (too short)
     short_file = tmp_path / "short.mp4"
     short_file.write_bytes(b"\x00\x00")
-    assert _is_valid_mpeg_ps(short_file, offset=0) is False
+    assert is_valid_mpeg_ps(short_file, offset=0) is False
 
     # File not found
-    assert _is_valid_mpeg_ps(tmp_path / "missing.mp4", offset=0) is False
+    assert is_valid_mpeg_ps(tmp_path / "missing.mp4", offset=0) is False
 
 
-def test_process_segments(camera_dir: Path):
+def test_process_segments(camera_dir: Path) -> None:
     """Given a valid camera directory, process_segments should discover available videos."""
     header, segments = process_segments(camera_dir)
     assert header.av_files == 1
@@ -64,7 +70,7 @@ def test_process_segments(camera_dir: Path):
     assert isinstance(segments[0].start_dt, datetime)
 
 
-def test_process_segments_missing_source_file(camera_dir: Path):
+def test_process_segments_missing_source_file(camera_dir: Path) -> None:
     """If the source hivXXXXX.mp4 is missing, the segments are skipped gracefully."""
     (camera_dir / "hiv00000.mp4").unlink()
 
@@ -72,7 +78,7 @@ def test_process_segments_missing_source_file(camera_dir: Path):
     assert len(segments) == 0
 
 
-def test_process_segments_unfinalized_active_file(tmp_path: Path):
+def test_process_segments_unfinalized_active_file(tmp_path: Path) -> None:
     """Ensure segments in active/unfinalized files (segment_count=0 in file_records) are still processed."""
     import struct
 
@@ -129,24 +135,35 @@ def test_process_segments_unfinalized_active_file(tmp_path: Path):
     assert segments[1].source_file_name == "hiv00001.mp4"
 
 
-def test_extract_segment_success(camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker):
+def test_extract_segment_success(
+    camera_dir: Path,
+    tmp_path: Path,
+    mock_ffmpeg: None,
+    mocker: MockerFixture,
+) -> None:
     """Mock subprocess.run to simulate successful extraction."""
     _, segments = process_segments(camera_dir)
     segment = segments[0]
 
     out_dir = tmp_path / "out"
 
-    def mock_run(cmd, input, stdout, stderr, **kwargs):
+    def mock_run(
+        cmd: list[str],
+        input: bytes,
+        stdout: Any,
+        stderr: Any,
+        **kwargs: Any,
+    ) -> MagicMock:
         # Create output file so stat().st_size > 0 passes
         mp4_out = Path(cmd[-1])
         mp4_out.parent.mkdir(parents=True, exist_ok=True)
         mp4_out.write_bytes(b"\x00" * 100)
-        res = mocker.MagicMock()
+        res: MagicMock = mocker.MagicMock()
         res.returncode = 0
         res.stderr = b""
         return res
 
-    mock_sub_run = mocker.patch("subprocess.run", side_effect=mock_run)
+    mock_sub_run: MagicMock = mocker.patch("subprocess.run", side_effect=mock_run)
 
     result = extract_segment(segment, camera_dir, out_dir, replace=True)
 
@@ -157,13 +174,16 @@ def test_extract_segment_success(camera_dir: Path, tmp_path: Path, mock_ffmpeg, 
 
 
 def test_extract_segment_ffmpeg_failure(
-    camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker
-):
+    camera_dir: Path,
+    tmp_path: Path,
+    mock_ffmpeg: None,
+    mocker: MockerFixture,
+) -> None:
     """If ffmpeg fails (non-zero exit code), it should clean up the output file and return None."""
     _, segments = process_segments(camera_dir)
     segment = segments[0]
 
-    mock_res = mocker.MagicMock()
+    mock_res: MagicMock = mocker.MagicMock()
     mock_res.returncode = 1
     mock_res.stderr = b"Error parsing stream"
     mocker.patch("subprocess.run", return_value=mock_res)
@@ -174,20 +194,25 @@ def test_extract_segment_ffmpeg_failure(
     assert result is None
 
 
-def test_extract_all_segments(camera_dir: Path, tmp_path: Path, mock_ffmpeg, mocker):
+def test_extract_all_segments(
+    camera_dir: Path,
+    tmp_path: Path,
+    mock_ffmpeg: None,
+    mocker: MockerFixture,
+) -> None:
     """Extracting all segments should handle concurrency and call merger."""
     _, segments = process_segments(camera_dir)
 
-    def mock_extract(seg, cam, out, replace):
-        p = out / "dummy.mp4"
+    def mock_extract(seg: RecordingSegment, cam: Path, out: Path, replace: bool) -> Path:
+        p: Path = out / "dummy.mp4"
         p.touch(exist_ok=True)
         return p
 
     # Mock extract_segment to bypass real extraction logic inside the ThreadPoolExecutor
-    mock_extract_segment = mocker.patch(
+    mock_extract_segment: MagicMock = mocker.patch(
         "ezhikstract.extractor.extract_segment", side_effect=mock_extract
     )
-    mock_merge = mocker.patch("ezhikstract.merger.merge_day")
+    mock_merge: MagicMock = mocker.patch("ezhikstract.merger.merge_day")
 
     out_dir = tmp_path / "recordings"
     extract_all_segments(segments, camera_dir, output_dir=out_dir)
@@ -196,7 +221,9 @@ def test_extract_all_segments(camera_dir: Path, tmp_path: Path, mock_ffmpeg, moc
     mock_merge.assert_called_once()
 
 
-def test_extract_all_segments_time_filter(camera_dir: Path, tmp_path: Path, mocker):
+def test_extract_all_segments_time_filter(
+    camera_dir: Path, tmp_path: Path, mocker: MockerFixture
+) -> None:
     """Time filters should correctly exclude segments outside the range."""
     # Create two segments, manually bypassing parser for speed
     seg1 = RecordingSegment(
@@ -208,7 +235,7 @@ def test_extract_all_segments_time_filter(camera_dir: Path, tmp_path: Path, mock
         source_file_name="test.mp4",
     )
 
-    mock_extract = mocker.patch("ezhikstract.extractor.extract_segment")
+    mock_extract: MagicMock = mocker.patch("ezhikstract.extractor.extract_segment")
     mocker.patch("ezhikstract.merger.merge_day")
 
     # Time filter completely outside segment
@@ -221,16 +248,18 @@ def test_extract_all_segments_time_filter(camera_dir: Path, tmp_path: Path, mock
 
 
 def test_process_picture_segments(
-    tmp_path: Path, create_valid_index00p, create_valid_pic
-):
+    tmp_path: Path,
+    create_valid_index00p: Callable[..., Path],
+    create_valid_pic: Callable[..., Path],
+) -> None:
     """Valid picture directories should be processed."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
-    index_path = create_valid_index00p(1)
+    index_path: Path = create_valid_index00p(1)
     index_path.rename(cam_dir / "index00p.bin")
 
-    pic_path = create_valid_pic("hiv00000.pic", 200)
+    pic_path: Path = create_valid_pic("hiv00000.pic", 200)
     pic_path.rename(cam_dir / "hiv00000.pic")
 
     header, segments = process_picture_segments(cam_dir)
@@ -239,7 +268,7 @@ def test_process_picture_segments(
     assert segments[0].source_file_name == "hiv00000.pic"
 
 
-def test_extract_picture_segment(tmp_path: Path):
+def test_extract_picture_segment(tmp_path: Path) -> None:
     """Pictures are extracted by slicing bytes directly and trimming SOI/EOI alignment padding."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
@@ -274,7 +303,7 @@ def test_extract_picture_segment(tmp_path: Path):
     assert len(data) == 22
 
 
-def test_parse_time_filters():
+def test_parse_time_filters() -> None:
     """parse_time_filters should parse valid UTC timestamps and raise ValueError on invalid ones."""
     import pytest
 
@@ -292,7 +321,9 @@ def test_parse_time_filters():
         parse_time_filters(None, "invalid")
 
 
-def test_extract_segment_aligns_mpeg_ps_start(tmp_path: Path, mocker):
+def test_extract_segment_aligns_mpeg_ps_start(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     """extract_segment should detect and align to 0x000001 start code within leading padding."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
@@ -317,11 +348,17 @@ def test_extract_segment_aligns_mpeg_ps_start(tmp_path: Path, mocker):
         source_file_name="hiv00000.mp4",
     )
 
-    captured_inputs = []
+    captured_inputs: list[bytes] = []
 
-    def mock_run(cmd, input, stdout, stderr, **kwargs):
+    def mock_run(
+        cmd: list[str],
+        input: bytes,
+        stdout: Any,
+        stderr: Any,
+        **kwargs: Any,
+    ) -> MagicMock:
         captured_inputs.append(input)
-        res = mocker.MagicMock()
+        res: MagicMock = mocker.MagicMock()
         res.returncode = 0
         res.stderr = b""
         # Write output file

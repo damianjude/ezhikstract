@@ -12,7 +12,10 @@ Important edge cases:
 """
 
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
+from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
 from ezhikstract.cli import app
@@ -20,31 +23,31 @@ from ezhikstract.cli import app
 runner = CliRunner()
 
 
-def test_cli_list_videos_invalid_dir():
+def test_cli_list_videos_invalid_dir() -> None:
     """An invalid directory should exit with code 2 gracefully via Typer's built-in checks."""
     result = runner.invoke(app, ["list", "videos", "/does/not/exist"])
     assert result.exit_code != 0
     assert "does not exist" in result.output
 
 
-def test_cli_list_videos_no_index(tmp_path: Path):
+def test_cli_list_videos_no_index(tmp_path: Path) -> None:
     """If the directory exists but index00.bin doesn't, it should raise a clear error."""
     result = runner.invoke(app, ["list", "videos", str(tmp_path)])
     assert result.exit_code == 1
     assert "not found" in result.stderr
 
 
-def test_cli_extract_videos(tmp_path: Path, mocker):
+def test_cli_extract_videos(tmp_path: Path, mocker: MockerFixture) -> None:
     """Extract videos command should parse arguments and call the extractor."""
     # Setup dummy directory
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
     # Mock the internal logic
-    mock_process = mocker.patch(
+    mock_process: MagicMock = mocker.patch(
         "ezhikstract.extractor.process_segments", return_value=(None, [])
     )
-    mock_extract = mocker.patch("ezhikstract.extractor.extract_all_segments")
+    mock_extract: MagicMock = mocker.patch("ezhikstract.extractor.extract_all_segments")
 
     out_dir = tmp_path / "out"
 
@@ -66,19 +69,20 @@ def test_cli_extract_videos(tmp_path: Path, mocker):
     mock_extract.assert_called_once()
 
     # Verify the time argument is passed properly
-    _, kwargs = mock_extract.call_args
+    call_args: Any = mock_extract.call_args
+    _, kwargs = call_args
     assert kwargs["from_time"] == "2023-01-01 12:00:00"
 
 
-def test_cli_extract_pictures(tmp_path: Path, mocker):
+def test_cli_extract_pictures(tmp_path: Path, mocker: MockerFixture) -> None:
     """Extract pictures command should parse arguments and call the picture extractor."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
-    mock_process = mocker.patch(
+    mock_process: MagicMock = mocker.patch(
         "ezhikstract.extractor.process_picture_segments", return_value=(None, [])
     )
-    mock_extract = mocker.patch("ezhikstract.extractor.extract_all_pictures")
+    mock_extract: MagicMock = mocker.patch("ezhikstract.extractor.extract_all_pictures")
 
     result = runner.invoke(app, ["extract", "pictures", str(cam_dir)])
 
@@ -87,7 +91,7 @@ def test_cli_extract_pictures(tmp_path: Path, mocker):
     mock_extract.assert_called_once()
 
 
-def test_cli_extract_videos_invalid_time(tmp_path: Path):
+def test_cli_extract_videos_invalid_time(tmp_path: Path) -> None:
     """An invalid --from or --to format should fail immediately before processing segments."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
@@ -101,7 +105,7 @@ def test_cli_extract_videos_invalid_time(tmp_path: Path):
     assert "Invalid --from time format" in result.stderr
 
 
-def test_cli_extract_pictures_invalid_time(tmp_path: Path):
+def test_cli_extract_pictures_invalid_time(tmp_path: Path) -> None:
     """An invalid --from or --to format in extract pictures should fail immediately."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
