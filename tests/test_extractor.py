@@ -13,9 +13,10 @@ Important edge cases:
 - Subprocess mocking for ffmpeg extraction.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from unittest.mock import MagicMock
 
 from pytest_mock import MockerFixture
@@ -203,7 +204,9 @@ def test_extract_all_segments(
     """Extracting all segments should handle concurrency and call merger."""
     _, segments = process_segments(camera_dir)
 
-    def mock_extract(seg: RecordingSegment, cam: Path, out: Path, replace: bool) -> Path:
+    def mock_extract(
+        seg: RecordingSegment, cam: Path, out: Path, replace: bool
+    ) -> Path:
         p: Path = out / "dummy.mp4"
         p.touch(exist_ok=True)
         return p

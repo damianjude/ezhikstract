@@ -15,8 +15,8 @@ Important edge cases:
 """
 
 import struct
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
 from hypothesis import HealthCheck, given, settings
