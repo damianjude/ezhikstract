@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -40,6 +42,11 @@ def list_videos(
         _, segments = process_segments(input_dir)
         log_available_recordings(segments)
     except BrokenPipeError:
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
         raise typer.Exit(code=0)
     except (FileNotFoundError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
@@ -67,6 +74,11 @@ def list_pictures(
         _, segments = process_picture_segments(input_dir)
         log_available_pictures(segments)
     except BrokenPipeError:
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
         raise typer.Exit(code=0)
     except (FileNotFoundError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
@@ -217,9 +229,18 @@ def extract_pictures(
 
 
 def main() -> None:
-    app()
+    try:
+        app()
+    except BrokenPipeError:
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
+        sys.exit(0)
 
 
 if __name__ == "__main__":
     main()
+
 
