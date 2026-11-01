@@ -38,21 +38,36 @@ def test_merge_day_no_replace(tmp_path: Path) -> None:
 def test_merge_day_success(
     tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
 ) -> None:
-    """A successful merge should call subprocess.run and return the output path."""
+    """A successful multi-segment merge should call subprocess.run and return the output path."""
     mock_run: MagicMock = mocker.patch("subprocess.run")
 
     seg1 = tmp_path / "seg1.mp4"
     seg1.touch()
+    seg2 = tmp_path / "seg2.mp4"
+    seg2.touch()
+    out_file = tmp_path / "out.mp4"
+
+    result = merge_day([seg1, seg2], out_file, replace=True)
+
+    assert result == out_file
+    mock_run.assert_called_once()
+
+
+def test_merge_day_single_segment_fast_path(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """A day with a single segment should directly copy the file without spawning FFmpeg."""
+    mock_run: MagicMock = mocker.patch("subprocess.run")
+
+    seg1 = tmp_path / "seg1.mp4"
+    seg1.write_bytes(b"fast-path-content")
     out_file = tmp_path / "out.mp4"
 
     result = merge_day([seg1], out_file, replace=True)
 
     assert result == out_file
-    mock_run.assert_called_once()
-
-    # Assert temporary concat file was cleaned up
-    # We can't directly check the tempfile since it's deleted, but we can intercept unlink
-    # In integration the Python garbage collector or finally block will delete it.
+    assert out_file.read_bytes() == b"fast-path-content"
+    mock_run.assert_not_called()
 
 
 def test_merge_day_subprocess_failure(
@@ -66,12 +81,16 @@ def test_merge_day_subprocess_failure(
     )
 
     seg1 = tmp_path / "seg1.mp4"
+    seg1.touch()
+    seg2 = tmp_path / "seg2.mp4"
+    seg2.touch()
     out_file = tmp_path / "out.mp4"
 
-    result = merge_day([seg1], out_file, replace=True)
+    result = merge_day([seg1, seg2], out_file, replace=True)
 
     assert result is None
     mock_run.assert_called_once()
+
 
 
 def test_merge_day_escapes_filenames(

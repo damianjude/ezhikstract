@@ -5,6 +5,7 @@ Concatenates per-segment .mp4 files for a single day into one merged .mp4
 using ffmpeg's concat demuxer (stream-copy, no re-encoding).
 """
 
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -34,6 +35,18 @@ def merge_day(
     except OSError as error:
         print(f"Error: Failed to delete existing output file {output_path}: {error}")
         return None
+
+    # Fast path: if only one segment exists for the day, copy directly without FFmpeg concat overhead
+    if len(segment_files) == 1:
+        try:
+            shutil.copyfile(segment_files[0], output_path)
+            print(f"Merged → {output_path.name}")
+            return output_path
+        except OSError as error:
+            print(f"Merge failed: {error}")
+            if output_path.exists():
+                output_path.unlink(missing_ok=True)
+            return None
 
     # Escape single quotes to prevent syntax errors in the ffmpeg concat file
     lines: list[str] = []

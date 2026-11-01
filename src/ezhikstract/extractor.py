@@ -235,14 +235,15 @@ def extract_segment(
     The segment data is read directly from disk and piped into ffmpeg for lossless remuxing.
     Returns the path to the produced .mp4, or None on failure.
     """
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        print(
-            f"Error: Failed to create output directory {output_dir}: {error}",
-            file=sys.stderr,
-        )
-        return None
+    if not output_dir.exists():
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            print(
+                f"Error: Failed to create output directory {output_dir}: {error}",
+                file=sys.stderr,
+            )
+            return None
 
     start_str = segment.start_dt.strftime("%d%m%Y %H%M%S")
     end_str = segment.end_dt.strftime("%d%m%Y %H%M%S")
@@ -424,8 +425,8 @@ def extract_all_segments(
                 tmpdir = Path(tmpdir_str)
                 extracted_map: dict[int, Path] = {}
 
-                # Limit concurrency to 4 workers or CPU cores to avoid overwhelming the disk
-                max_workers = min(4, os.cpu_count() or 1)
+                # Bound concurrency to CPU cores (up to 8 workers)
+                max_workers = min(8, os.cpu_count() or 1)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
                         executor.submit(
@@ -545,14 +546,15 @@ def extract_picture_segment(
     *,
     replace: bool = True,
 ) -> Path | None:
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as error:
-        print(
-            f"Error: Failed to create output directory {output_dir}: {error}",
-            file=sys.stderr,
-        )
-        return None
+    if not output_dir.exists():
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            print(
+                f"Error: Failed to create output directory {output_dir}: {error}",
+                file=sys.stderr,
+            )
+            return None
 
     start_str = segment.start_dt.strftime("%d%m%Y %H%M%S")
     stem = f"{start_str} ({segment.source_file_index:05d}-{segment.raw.start_offset})"
@@ -611,14 +613,24 @@ def extract_all_pictures(
         and (end_dt is None or s.start_dt < end_dt)
     ]
 
-    print(f"{len(to_process)} of {len(segments)} pictures will be extracted")
-    if not to_process:
-        return
-
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise OSError(f"Failed to create output directory '{output_dir}': {error}")
+
+    if not replace:
+        to_process = [
+            s
+            for s in to_process
+            if not (
+                output_dir
+                / f"{s.start_dt.strftime('%d%m%Y %H%M%S')} ({s.source_file_index:05d}-{s.raw.start_offset}).jpg"
+            ).exists()
+        ]
+
+    print(f"{len(to_process)} of {len(segments)} pictures will be extracted")
+    if not to_process:
+        return
 
     with Progress(
         TextColumn("[bold blue]{task.description}"),
