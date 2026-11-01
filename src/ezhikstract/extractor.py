@@ -92,28 +92,25 @@ def parse_time_filters(
 
 def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegment]]:
     """
-    Parse index00.bin, map each segment to its source container file, and return a time-sorted list of valid RecordingSegments.
+    Parse index00.bin (or index01.bin backup), map each segment to its source container file,
+    and return a time-sorted list of valid RecordingSegments.
     """
     index_path = camera_dir / "index00.bin"
+    if not index_path.exists() and (camera_dir / "index01.bin").exists():
+        index_path = camera_dir / "index01.bin"
+
     # Attempt to load and parse the binary index file
     try:
         header, raw_segments = load_index(index_path)
     except FileNotFoundError:
-        raise FileNotFoundError(f"Index file index00.bin not found in '{camera_dir}'.")
+        raise FileNotFoundError(
+            f"Index file index00.bin not found in '{camera_dir}'."
+        )
     except OSError as error:
         raise OSError(f"Failed to read index file '{index_path}': {error}")
 
     segments: list[RecordingSegment] = []
     skipped = 0
-
-    # Active file records with valid timestamp ranges
-    active_recs = [
-        rec
-        for rec in header.file_records
-        if rec.segment_count != 65535
-        and rec.start_time_raw > 0
-        and rec.end_time_raw >= rec.start_time_raw
-    ]
 
     try:
         existing_files: set[str] = {p.name for p in camera_dir.iterdir() if p.is_file()}
@@ -135,25 +132,8 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
 
         seg_ts = seg.start_time_raw & _DATE_MASK
         seg_dt = datetime.fromtimestamp(seg_ts, tz=timezone.utc)
-        logical_file_index = flat_idx // MAX_SEGMENTS_PER_SOURCE_FILE
+        matched_file_index = flat_idx // MAX_SEGMENTS_PER_SOURCE_FILE
         source_file_segment_index = flat_idx % MAX_SEGMENTS_PER_SOURCE_FILE
-
-        # 1. Match against active file records by timestamp
-        matched_file_index: int | None = None
-        for rec in active_recs:
-            rec_s = rec.start_time_raw & _DATE_MASK
-            rec_e = rec.end_time_raw & _DATE_MASK
-            if rec_s <= seg_ts <= rec_e:
-                matched_file_index = rec.file_index
-                break
-
-        # 2. Check active container file (last_file_no) if recording is current/unfinalized
-        if matched_file_index is None and header.last_file_no >= 0:
-            matched_file_index = header.last_file_no
-
-        # 3. Fallback to logical file index
-        if matched_file_index is None:
-            matched_file_index = logical_file_index
 
         source_name = f"hiv{matched_file_index:05d}.mp4"
         if existing_files and source_name not in existing_files:
@@ -496,11 +476,16 @@ def process_picture_segments(
     from .parser import load_picture_index
 
     index_path = camera_dir / "index00p.bin"
+    if not index_path.exists() and (camera_dir / "index01p.bin").exists():
+        index_path = camera_dir / "index01p.bin"
+
     # Attempt to load and parse the binary index file
     try:
         header, raw_segments = load_picture_index(index_path)
     except FileNotFoundError:
-        raise FileNotFoundError(f"Index file index00p.bin not found in '{camera_dir}'.")
+        raise FileNotFoundError(
+            f"Index file index00p.bin not found in '{camera_dir}'."
+        )
     except OSError as error:
         raise OSError(f"Failed to read index file '{index_path}': {error}")
 

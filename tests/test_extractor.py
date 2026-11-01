@@ -136,6 +136,86 @@ def test_process_segments_unfinalized_active_file(tmp_path: Path) -> None:
     assert segments[1].source_file_name == "hiv00001.mp4"
 
 
+def test_process_segments_backup_index01_fallback(
+    tmp_path: Path,
+    create_valid_index00: Callable[..., Path],
+    create_valid_mpeg_ps: Callable[..., Path],
+) -> None:
+    """If index00.bin is missing but index01.bin exists, fallback to index01.bin."""
+    cam_dir = tmp_path / "camera_backup"
+    cam_dir.mkdir()
+    index_path = create_valid_index00(num_files=1, num_segments=1)
+    index_path.rename(cam_dir / "index01.bin")  # backup only
+
+    mpeg_path = create_valid_mpeg_ps("hiv00000.mp4", 4096)
+    mpeg_path.rename(cam_dir / "hiv00000.mp4")
+
+    _, segments = process_segments(cam_dir)
+    assert len(segments) == 1
+    assert segments[0].source_file_name == "hiv00000.mp4"
+
+
+def test_process_segments_slot_mapping_independent_of_timestamp_order(
+    tmp_path: Path,
+) -> None:
+    """Slots belong to their file index (slot // 256) even if timestamps reset on reboot."""
+    import struct
+
+    from ezhikstract.parser import MAX_SEGMENTS_PER_SOURCE_FILE, SEGMENT_RECORD_LENGTH
+
+    cam_dir = tmp_path / "camera_reboot"
+    cam_dir.mkdir()
+
+    num_files = 2
+    header_bytes = struct.pack(
+        "<QIIII1176s76sI", 1, 3, num_files, num_files, 1, b"\x00" * 1176, b"\x00" * 76, 0
+    )
+    # File 0 has 2026 timestamps, File 1 has a 2022 timestamp (simulating reboot)
+    rec0 = struct.pack("<IIII16x", 0, 1, 1784339497, 1784339538)
+    rec1 = struct.pack("<IIII16x", 1, 1, 1664582422, 1664582423)
+    file_records = rec0 + rec1
+
+    seg0 = struct.pack("<8xQQ16xII32x", 1784339497, 1784339538, 0, 1024)
+    seg1 = struct.pack("<8xQQ16xII32x", 1664582422, 1664582423, 0, 1024)
+
+    segments_bytes = seg0 + b"\x00" * (SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1))
+    segments_bytes += seg1 + b"\x00" * (SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1))
+
+    (cam_dir / "index00.bin").write_bytes(header_bytes + file_records + segments_bytes)
+    (cam_dir / "hiv00000.mp4").write_bytes(b"\x00" * 1024)
+    (cam_dir / "hiv00001.mp4").write_bytes(b"\x00" * 1024)
+
+    _, segments = process_segments(cam_dir)
+    assert len(segments) == 2
+    # seg1 has earlier timestamp (2022), so after sorting by datetime it comes first
+    assert segments[0].start_dt.year == 2022
+    assert segments[0].source_file_name == "hiv00001.mp4"
+    assert segments[0].source_file_index == 1
+    assert segments[1].start_dt.year == 2026
+    assert segments[1].source_file_name == "hiv00000.mp4"
+    assert segments[1].source_file_index == 0
+
+
+def test_process_picture_segments_backup_index01p_fallback(
+    tmp_path: Path,
+    create_valid_index00p: Callable[..., Path],
+    create_valid_pic: Callable[..., Path],
+) -> None:
+    """If index00p.bin is missing but index01p.bin exists, fallback to index01p.bin."""
+    cam_dir = tmp_path / "camera_pic_backup"
+    cam_dir.mkdir()
+    index_path = create_valid_index00p(num_segments=1)
+    index_path.rename(cam_dir / "index01p.bin")
+
+    pic_path = create_valid_pic("hiv00000.pic", 100)
+    pic_path.rename(cam_dir / "hiv00000.pic")
+
+    _, segments = process_picture_segments(cam_dir)
+    assert len(segments) == 1
+    assert segments[0].source_file_name == "hiv00000.pic"
+
+
+
 def test_extract_segment_success(
     camera_dir: Path,
     tmp_path: Path,
