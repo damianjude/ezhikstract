@@ -39,6 +39,8 @@ def list_videos(
     try:
         _, segments = process_segments(input_dir)
         log_available_recordings(segments)
+    except BrokenPipeError:
+        raise typer.Exit(code=0)
     except (FileNotFoundError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1)
@@ -64,6 +66,8 @@ def list_pictures(
     try:
         _, segments = process_picture_segments(input_dir)
         log_available_pictures(segments)
+    except BrokenPipeError:
+        raise typer.Exit(code=0)
     except (FileNotFoundError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1)
@@ -132,6 +136,8 @@ def extract_videos(
             output_dir=output_dir,
             replace=replace,
         )
+    except BrokenPipeError:
+        raise typer.Exit(code=0)
     except (FileNotFoundError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1)
@@ -203,6 +209,8 @@ def extract_pictures(
             output_dir=output_dir,
             replace=replace,
         )
+    except BrokenPipeError:
+        raise typer.Exit(code=0)
     except (FileNotFoundError, OSError, ValueError) as error:
         typer.echo(f"Error: {error}", err=True)
         raise typer.Exit(code=1)
@@ -210,3 +218,8 @@ def extract_pictures(
 
 def main() -> None:
     app()
+
+
+if __name__ == "__main__":
+    main()
+

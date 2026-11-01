@@ -117,3 +117,41 @@ def test_cli_extract_pictures_invalid_time(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "Invalid --to time format" in result.stderr
+
+
+def test_cli_list_videos_broken_pipe_exits_cleanly(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """When stdout is closed downstream (e.g. piped to head), BrokenPipeError exits with 0."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+    mocker.patch(
+        "ezhikstract.extractor.process_segments", return_value=(None, [])
+    )
+    mocker.patch(
+        "ezhikstract.extractor.log_available_recordings",
+        side_effect=BrokenPipeError("[Errno 32] Broken pipe"),
+    )
+
+    result = runner.invoke(app, ["list", "videos", str(cam_dir)])
+    assert result.exit_code == 0
+
+
+def test_cli_list_pictures_broken_pipe_exits_cleanly(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """When stdout is closed downstream for pictures, BrokenPipeError exits with 0."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+    mocker.patch(
+        "ezhikstract.extractor.process_picture_segments",
+        return_value=(None, []),
+    )
+    mocker.patch(
+        "ezhikstract.extractor.log_available_pictures",
+        side_effect=BrokenPipeError("[Errno 32] Broken pipe"),
+    )
+
+    result = runner.invoke(app, ["list", "pictures", str(cam_dir)])
+    assert result.exit_code == 0
+
