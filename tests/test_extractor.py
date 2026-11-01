@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
 from pytest_mock import MockerFixture
 
 from ezhikstract.extractor import (
@@ -456,3 +457,93 @@ def test_extract_segment_aligns_mpeg_ps_start(
     assert len(captured_inputs) == 1
     # Verify the input was aligned (starts with 0x000001)
     assert captured_inputs[0].startswith(b"\x00\x00\x01\xba\x40")
+
+
+def test_parse_time_filters_invalid_range() -> None:
+    """parse_time_filters should raise ValueError when --from is later than or equal to --to."""
+    with pytest.raises(ValueError, match="Invalid time filter range: --from"):
+        parse_time_filters("2026-08-01 12:00:00", "2026-07-01 12:00:00")
+
+    with pytest.raises(ValueError, match="Invalid time filter range: --from"):
+        parse_time_filters("2026-08-01 12:00:00", "2026-08-01 12:00:00")
+
+
+def test_extract_picture_segment_missing_soi(tmp_path: Path) -> None:
+    """extract_picture_segment should return None when data is not a valid JPEG (no SOI marker)."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+    out_dir = tmp_path / "out"
+
+    raw_corrupted = b"\x00\x00\x00\x00" * 10
+    (cam_dir / "hiv00000.pic").write_bytes(raw_corrupted)
+
+    seg = RecordingSegment(
+        raw=Segment(
+            start_time_raw=123,
+            end_time_raw=123,
+            start_offset=0,
+            end_offset=len(raw_corrupted),
+        ),
+        start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        end_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        source_file_index=0,
+        source_file_segment_index=0,
+        source_file_name="hiv00000.pic",
+    )
+
+    result = extract_picture_segment(seg, cam_dir, out_dir, replace=True)
+    assert result is None
+    # No file should have been written to out_dir
+    assert len(list(out_dir.glob("*.jpg"))) == 0
+
+
+def test_extract_segment_missing_start_code(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
+    """extract_segment should return None without calling FFmpeg if 0x000001 is missing."""
+    cam_dir = tmp_path / "camera"
+    cam_dir.mkdir()
+    out_dir = tmp_path / "out"
+
+    raw_corrupted = b"\xff\xff\xff\xff" * 100
+    (cam_dir / "hiv00000.mp4").write_bytes(raw_corrupted)
+
+    mock_run: MagicMock = mocker.patch("subprocess.run")
+
+    seg = RecordingSegment(
+        raw=Segment(
+            start_time_raw=1672574400,
+            end_time_raw=1672574405,
+            start_offset=0,
+            end_offset=len(raw_corrupted),
+        ),
+        start_dt=datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+        end_dt=datetime(2023, 1, 1, 12, 0, 5, tzinfo=timezone.utc),
+        source_file_index=0,
+        source_file_segment_index=0,
+        source_file_name="hiv00000.mp4",
+    )
+
+    result = extract_segment(seg, cam_dir, out_dir, replace=True)
+    assert result is None
+    mock_run.assert_not_called()
+
+
+def test_process_segments_case_insensitive_filename(
+    tmp_path: Path,
+    create_valid_index00: Callable[..., Path],
+    create_valid_mpeg_ps: Callable[..., Path],
+) -> None:
+    """process_segments should match container files even if named in uppercase (e.g. HIV00000.MP4)."""
+    cam_dir = tmp_path / "camera_caps"
+    cam_dir.mkdir()
+    index_path = create_valid_index00(num_files=1, num_segments=1)
+    index_path.rename(cam_dir / "index00.bin")
+
+    mpeg_path = create_valid_mpeg_ps("HIV00000.MP4", 4096)
+    mpeg_path.rename(cam_dir / "HIV00000.MP4")
+
+    _, segments = process_segments(cam_dir)
+    assert len(segments) == 1
+    assert segments[0].source_file_name == "HIV00000.MP4"
+

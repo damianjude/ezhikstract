@@ -87,6 +87,11 @@ def parse_time_filters(
                 f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
             )
 
+    if start_dt and end_dt and start_dt >= end_dt:
+        raise ValueError(
+            f"Invalid time filter range: --from ({from_time}) must be earlier than --to ({to_time})"
+        )
+
     return start_dt, end_dt
 
 
@@ -113,9 +118,11 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     skipped = 0
 
     try:
-        existing_files: set[str] = {p.name for p in camera_dir.iterdir() if p.is_file()}
+        existing_files: dict[str, str] = {
+            p.name.lower(): p.name for p in camera_dir.iterdir() if p.is_file()
+        }
     except OSError:
-        existing_files = set()
+        existing_files = {}
 
     for flat_idx, seg in enumerate(raw_segments):
         if seg.end_time_raw == 0:
@@ -136,9 +143,12 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
         source_file_segment_index = flat_idx % MAX_SEGMENTS_PER_SOURCE_FILE
 
         source_name = f"hiv{matched_file_index:05d}.mp4"
-        if existing_files and source_name not in existing_files:
-            skipped += 1
-            continue
+        if existing_files:
+            actual_name = existing_files.get(source_name.lower())
+            if not actual_name:
+                skipped += 1
+                continue
+            source_name = actual_name
 
         segments.append(
             RecordingSegment(
@@ -265,6 +275,9 @@ def extract_segment(
         )
         return None
 
+    if segment.raw.start_offset >= segment.raw.end_offset:
+        return None
+
     source_path = camera_dir / segment.source_file_name
     try:
         with open(source_path, "rb") as fh:
@@ -279,6 +292,12 @@ def extract_segment(
 
     # Align segment start offset past any proprietary header to MPEG-PS start code (0x000001)
     pos = seg_data[:2048].find(b"\x00\x00\x01")
+    if pos == -1:
+        print(
+            f"Warning: Segment {segment.start_dt} does not contain MPEG-PS / HEVC start code.",
+            file=sys.stderr,
+        )
+        return None
     if pos > 0:
         seg_data = seg_data[pos:]
 
@@ -494,9 +513,11 @@ def process_picture_segments(
     skipped = 0
 
     try:
-        existing_files: set[str] = {p.name for p in camera_dir.iterdir() if p.is_file()}
+        existing_files: dict[str, str] = {
+            p.name.lower(): p.name for p in camera_dir.iterdir() if p.is_file()
+        }
     except OSError:
-        existing_files = set()
+        existing_files = {}
 
     for source_file_index, seg in raw_segments:
         # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
@@ -509,9 +530,12 @@ def process_picture_segments(
             continue
 
         source_name = f"hiv{source_file_index:05d}.pic"
-        if existing_files and source_name not in existing_files:
-            skipped += 1
-            continue
+        if existing_files:
+            actual_name = existing_files.get(source_name.lower())
+            if not actual_name:
+                skipped += 1
+                continue
+            source_name = actual_name
 
         seg_ts = seg.start_time_raw & _DATE_MASK
         seg_dt = datetime.fromtimestamp(seg_ts, tz=timezone.utc)
@@ -563,20 +587,33 @@ def extract_picture_segment(
     if jpg_file.exists() and not replace:
         return jpg_file
 
+    if segment.raw.start_offset >= segment.raw.end_offset:
+        return None
+
     try:
         with open(camera_dir / segment.source_file_name, "rb") as fh:
             fh.seek(segment.raw.start_offset)
             raw = fh.read(segment.raw.end_offset - segment.raw.start_offset)
 
-        # Trim leading alignment padding up to JPEG SOI marker (0xFFD8)
+        # Check for JPEG SOI marker (0xFFD8)
         soi_idx = raw.find(b"\xff\xd8")
-        if soi_idx != -1 and soi_idx > 0:
+        if soi_idx == -1:
+            print(
+                f"Error: No JPEG SOI marker found in picture segment {segment.start_dt}",
+                file=sys.stderr,
+            )
+            return None
+
+        if soi_idx > 0:
             raw = raw[soi_idx:]
 
         # Trim trailing alignment zero-padding past JPEG EOI marker (0xFFD9)
         eoi_idx = raw.rfind(b"\xff\xd9")
         if eoi_idx != -1:
             raw = raw[: eoi_idx + 2]
+
+        if len(raw) < 4:
+            return None
 
         jpg_file.write_bytes(raw)
         return jpg_file

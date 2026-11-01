@@ -84,12 +84,19 @@ def merge_day(
             str(output_path),
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=True, timeout=300
+        )
         if result.stderr:
             # Avoid printing all standard logs of ffmpeg to avoid noise, but we can print it if there's any actual issue.
             pass
         print(f"Merged → {output_path.name}")
         return output_path
+    except subprocess.TimeoutExpired:
+        print("Merge failed: FFmpeg process timed out after 300 seconds.")
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+        return None
     except subprocess.CalledProcessError as error:
         print(f"Merge failed with exit code {error.returncode}.")
         if error.stderr:

@@ -92,6 +92,28 @@ def test_merge_day_subprocess_failure(
     mock_run.assert_called_once()
 
 
+def test_merge_day_timeout(
+    tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
+) -> None:
+    """If FFmpeg hangs and times out during merge, it should clean up and return None."""
+    mock_run: MagicMock = mocker.patch(
+        "subprocess.run",
+        side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300),
+    )
+
+    seg1 = tmp_path / "seg1.mp4"
+    seg1.touch()
+    seg2 = tmp_path / "seg2.mp4"
+    seg2.touch()
+    out_file = tmp_path / "out.mp4"
+
+    result = merge_day([seg1, seg2], out_file, replace=True)
+
+    assert result is None
+    mock_run.assert_called_once()
+
+
+
 
 def test_merge_day_escapes_filenames(
     tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
