@@ -254,3 +254,30 @@ def test_load_index_bounded_by_av_files(tmp_path: Path) -> None:
     header_res, segments_res = load_index(index_path)
     assert header_res.av_files == 1
     assert len(segments_res) == MAX_SEGMENTS_PER_SOURCE_FILE
+
+
+def test_detect_video_segment_record_length_and_parse_96_byte(tmp_path: Path) -> None:
+    """96-byte video index files should be auto-detected and parsed correctly."""
+    header = struct.pack(
+        "<QIIII1176s76sI", 1, 3, 1, 1, 0, b"\x00" * 1176, b"\x00" * 76, 0
+    )
+    file_records = b"\x00" * FILE_RECORD_LENGTH
+    time_val = 1784339497
+    seg1 = struct.pack(
+        "<8xQQ16xII48x", time_val, time_val + 40, 0, 1024
+    )
+    seg2 = struct.pack(
+        "<8xQQ16xII48x", time_val + 50, time_val + 90, 1024, 2048
+    )
+    data = header + file_records + seg1 + seg2
+    index_file = tmp_path / "index00.bin"
+    index_file.write_bytes(data)
+
+    header_parsed, segments = load_index(index_file)
+    assert header_parsed.av_files == 1
+    assert len(segments) >= 2
+    assert segments[0].start_offset == 0
+    assert segments[0].end_offset == 1024
+    assert segments[1].start_offset == 1024
+    assert segments[1].end_offset == 2048
+

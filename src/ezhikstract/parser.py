@@ -5,7 +5,8 @@ from pathlib import Path
 # Index file layout
 HEADER_BUFFER_LENGTH: int = 1280
 FILE_RECORD_LENGTH: int = 32  # bytes per av-file record in the header area
-SEGMENT_RECORD_LENGTH: int = 80  # bytes per video segment record
+SEGMENT_RECORD_LENGTH: int = 80  # legacy video segment record size
+SEGMENT_RECORD_LENGTH_96: int = 96  # EZVIZ v3 96-byte video segment record size
 SEGMENT_RECORD_LENGTH_PIC: int = 96  # bytes per picture segment record
 MAX_SEGMENTS_PER_SOURCE_FILE: int = 256
 
@@ -13,6 +14,7 @@ MAX_SEGMENTS_PER_SOURCE_FILE: int = 256
 HEADER_STRUCT = struct.Struct("<QIIII1176s76sI")
 FILE_RECORD_STRUCT = struct.Struct("<IIII16x")
 SEGMENT_STRUCT = struct.Struct("<8xQQ16xII32x")
+SEGMENT_STRUCT_96 = struct.Struct("<8xQQ16xII48x")
 PICTURE_SEGMENT_STRUCT = struct.Struct("<8xQQ16xII48x")
 
 
@@ -109,7 +111,78 @@ def parse_picture_segment(data: bytes) -> Segment:
     )
 
 
-def load_index(index_path: str | Path) -> tuple[IndexHeader, list[Segment]]:
+def detect_video_segment_record_length(
+    data: bytes, av_files: int, default_version: int = 3
+) -> int:
+    """
+    Detect whether video segment records use 96 bytes (EZVIZ v3 / newer cameras)
+    or 80 bytes (legacy Hikvision format) by scoring record sanity.
+    """
+    table_offset = HEADER_BUFFER_LENGTH + av_files * FILE_RECORD_LENGTH
+    rem_len = len(data) - table_offset
+    if rem_len <= 0:
+        return (
+            SEGMENT_RECORD_LENGTH_96
+            if default_version >= 3
+            else SEGMENT_RECORD_LENGTH
+        )
+
+    scores = {SEGMENT_RECORD_LENGTH_96: 0, SEGMENT_RECORD_LENGTH: 0}
+
+    for stride in (SEGMENT_RECORD_LENGTH_96, SEGMENT_RECORD_LENGTH):
+        # 1. Check first 32 contiguous slots
+        max_scan_records = min(32, rem_len // stride)
+        for i in range(max_scan_records):
+            off = table_offset + i * stride
+            rec = data[off : off + stride]
+            if len(rec) < 48:
+                break
+            st_raw, et_raw, s_off, e_off = struct.unpack("<8xQQ16xII", rec[:48])
+            st = st_raw & 0xFFFFFFFF
+            et = et_raw & 0xFFFFFFFF
+            if 0 <= s_off < e_off <= 268435456 and 1577836800 <= st <= et:
+                scores[stride] += 1
+                if stride == 96 and (
+                    b"INFO" in rec[48:80] or b"OFNI" in rec[48:80]
+                ):
+                    scores[stride] += 1
+
+        # 2. Check the first slot of subsequent files
+        for f_idx in range(1, min(av_files, 16)):
+            off = table_offset + f_idx * MAX_SEGMENTS_PER_SOURCE_FILE * stride
+            if off + stride <= len(data):
+                rec = data[off : off + stride]
+                st_raw, et_raw, s_off, e_off = struct.unpack(
+                    "<8xQQ16xII", rec[:48]
+                )
+                st = st_raw & 0xFFFFFFFF
+                et = et_raw & 0xFFFFFFFF
+                if 0 <= s_off < e_off <= 268435456 and 1577836800 <= st <= et:
+                    scores[stride] += 2
+
+    if scores[SEGMENT_RECORD_LENGTH_96] > scores[SEGMENT_RECORD_LENGTH]:
+        return SEGMENT_RECORD_LENGTH_96
+    if scores[SEGMENT_RECORD_LENGTH] > scores[SEGMENT_RECORD_LENGTH_96]:
+        return SEGMENT_RECORD_LENGTH
+
+    # Tie-breaker: table size divisibility
+    div_96 = rem_len % SEGMENT_RECORD_LENGTH_96 == 0
+    div_80 = rem_len % SEGMENT_RECORD_LENGTH == 0
+    if div_96 and not div_80:
+        return SEGMENT_RECORD_LENGTH_96
+    if div_80 and not div_96:
+        return SEGMENT_RECORD_LENGTH
+
+    return (
+        SEGMENT_RECORD_LENGTH_96
+        if default_version >= 3
+        else SEGMENT_RECORD_LENGTH
+    )
+
+
+def load_index(
+    index_path: str | Path, record_length: int | None = None
+) -> tuple[IndexHeader, list[Segment]]:
     """
     Read and parse an index00.bin file.
 
@@ -143,6 +216,17 @@ def load_index(index_path: str | Path) -> tuple[IndexHeader, list[Segment]]:
         file_rec_offset += FILE_RECORD_LENGTH
     header.file_records = file_records
 
+    if record_length is None:
+        record_length = detect_video_segment_record_length(
+            data, header.av_files, header.index_version
+        )
+
+    segment_struct = (
+        SEGMENT_STRUCT_96
+        if record_length == SEGMENT_RECORD_LENGTH_96
+        else SEGMENT_STRUCT
+    )
+
     segments: list[Segment] = []
 
     # Segment table starts immediately after the header + the per-file records.
@@ -150,10 +234,10 @@ def load_index(index_path: str | Path) -> tuple[IndexHeader, list[Segment]]:
     max_segments = header.av_files * MAX_SEGMENTS_PER_SOURCE_FILE
 
     for _ in range(max_segments):
-        if offset + SEGMENT_RECORD_LENGTH > len(data):
+        if offset + record_length > len(data):
             break
         start_time_raw, end_time_raw, start_offset, end_offset = (
-            SEGMENT_STRUCT.unpack_from(data, offset)
+            segment_struct.unpack_from(data, offset)
         )
         segments.append(
             Segment(
@@ -163,7 +247,7 @@ def load_index(index_path: str | Path) -> tuple[IndexHeader, list[Segment]]:
                 end_offset=end_offset,
             )
         )
-        offset += SEGMENT_RECORD_LENGTH
+        offset += record_length
 
     return header, segments
 
