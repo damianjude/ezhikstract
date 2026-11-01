@@ -15,7 +15,7 @@ SEGMENT_RECORD_LENGTH_PIC = 96
 
 @pytest.fixture
 def create_valid_index00(tmp_path: Path) -> Callable[[int, int], Path]:
-    """Factory to create a valid index00.bin file with given number of av_files and segments."""
+    """Factory to create valid index00.bin with av_files and segments."""
 
     def _create(num_files: int = 1, num_segments: int = 1) -> Path:
         path = tmp_path / "index00.bin"

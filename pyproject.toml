@@ -78,3 +78,9 @@ dev = [
 
 [tool.mypy]
 ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

@@ -27,7 +27,7 @@ def test_merge_day_empty_list() -> None:
 
 
 def test_merge_day_no_replace(tmp_path: Path) -> None:
-    """If the output file exists and replace=False, it should return the path without doing anything."""
+    """If output file exists and replace=False, return path without doing work."""
     out_file = tmp_path / "out.mp4"
     out_file.touch()
 
@@ -38,7 +38,7 @@ def test_merge_day_no_replace(tmp_path: Path) -> None:
 def test_merge_day_success(
     tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
 ) -> None:
-    """A successful multi-segment merge should call subprocess.run and return the output path."""
+    """Successful multi-segment merge should call subprocess.run and return path."""
     mock_run: MagicMock = mocker.patch("subprocess.run")
 
     seg1 = tmp_path / "seg1.mp4"
@@ -56,7 +56,7 @@ def test_merge_day_success(
 def test_merge_day_single_segment_fast_path(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """A day with a single segment should directly copy the file without spawning FFmpeg."""
+    """Single-segment day should directly copy file without spawning FFmpeg."""
     mock_run: MagicMock = mocker.patch("subprocess.run")
 
     seg1 = tmp_path / "seg1.mp4"
@@ -73,7 +73,7 @@ def test_merge_day_single_segment_fast_path(
 def test_merge_day_subprocess_failure(
     tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
 ) -> None:
-    """If ffmpeg fails with a non-zero exit code, it should handle the exception and return None."""
+    """If ffmpeg fails (non-zero exit), it should handle error and return None."""
     # Simulate a subprocess failure
     mock_run: MagicMock = mocker.patch(
         "subprocess.run",
@@ -95,7 +95,7 @@ def test_merge_day_subprocess_failure(
 def test_merge_day_timeout(
     tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
 ) -> None:
-    """If FFmpeg hangs and times out during merge, it should clean up and return None."""
+    """If FFmpeg times out during merge, it should clean up and return None."""
     mock_run: MagicMock = mocker.patch(
         "subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=300),
@@ -113,12 +113,10 @@ def test_merge_day_timeout(
     mock_run.assert_called_once()
 
 
-
-
 def test_merge_day_escapes_filenames(
     tmp_path: Path, mock_ffmpeg: None, mocker: MockerFixture
 ) -> None:
-    """Filenames with single quotes should be escaped correctly in the ffmpeg concat file."""
+    """Filenames with single quotes should be escaped in ffmpeg concat file."""
     # Create an actual file, capture tempfile generation
     mocker.patch("subprocess.run")
 

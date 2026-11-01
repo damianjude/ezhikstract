@@ -63,7 +63,7 @@ def test_is_valid_mpeg_ps(
 
 
 def test_process_segments(camera_dir: Path) -> None:
-    """Given a valid camera directory, process_segments should discover available videos."""
+    """process_segments should discover available videos in camera directory."""
     header, segments = process_segments(camera_dir)
     assert header.av_files == 1
     assert len(segments) == 2
@@ -81,7 +81,7 @@ def test_process_segments_missing_source_file(camera_dir: Path) -> None:
 
 
 def test_process_segments_unfinalized_active_file(tmp_path: Path) -> None:
-    """Ensure segments in active/unfinalized files (segment_count=0 in file_records) are still processed."""
+    """Ensure active/unfinalized files (segment_count=0) are processed."""
     import struct
 
     from ezhikstract.parser import MAX_SEGMENTS_PER_SOURCE_FILE, SEGMENT_RECORD_LENGTH
@@ -110,7 +110,7 @@ def test_process_segments_unfinalized_active_file(tmp_path: Path) -> None:
 
     # Segment for File 0 (timestamp 1672574400, inside rec0 range)
     seg0 = struct.pack("<8xQQ16xII32x", 1672574400, 1672574405, 0, 1024)
-    # Segment for File 1 (timestamp 1672580000, after rec0 range -> active file hiv00001)
+    # Segment for File 1 (timestamp 1672580000 -> active file hiv00001)
     seg1 = struct.pack("<8xQQ16xII32x", 1672580000, 1672580005, 0, 1024)
 
     # Pad segments array up to 2 * MAX_SEGMENTS_PER_SOURCE_FILE
@@ -159,7 +159,7 @@ def test_process_segments_backup_index01_fallback(
 def test_process_segments_slot_mapping_independent_of_timestamp_order(
     tmp_path: Path,
 ) -> None:
-    """Slots belong to their file index (slot // 256) even if timestamps reset on reboot."""
+    """Slots belong to file index (slot // 256) even if timestamps reset on reboot."""
     import struct
 
     from ezhikstract.parser import MAX_SEGMENTS_PER_SOURCE_FILE, SEGMENT_RECORD_LENGTH
@@ -169,7 +169,15 @@ def test_process_segments_slot_mapping_independent_of_timestamp_order(
 
     num_files = 2
     header_bytes = struct.pack(
-        "<QIIII1176s76sI", 1, 3, num_files, num_files, 1, b"\x00" * 1176, b"\x00" * 76, 0
+        "<QIIII1176s76sI",
+        1,
+        3,
+        num_files,
+        num_files,
+        1,
+        b"\x00" * 1176,
+        b"\x00" * 76,
+        0,
     )
     # File 0 has 2026 timestamps, File 1 has a 2022 timestamp (simulating reboot)
     rec0 = struct.pack("<IIII16x", 0, 1, 1784339497, 1784339538)
@@ -179,8 +187,12 @@ def test_process_segments_slot_mapping_independent_of_timestamp_order(
     seg0 = struct.pack("<8xQQ16xII32x", 1784339497, 1784339538, 0, 1024)
     seg1 = struct.pack("<8xQQ16xII32x", 1664582422, 1664582423, 0, 1024)
 
-    segments_bytes = seg0 + b"\x00" * (SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1))
-    segments_bytes += seg1 + b"\x00" * (SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1))
+    segments_bytes = seg0 + b"\x00" * (
+        SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1)
+    )
+    segments_bytes += seg1 + b"\x00" * (
+        SEGMENT_RECORD_LENGTH * (MAX_SEGMENTS_PER_SOURCE_FILE - 1)
+    )
 
     (cam_dir / "index00.bin").write_bytes(header_bytes + file_records + segments_bytes)
     (cam_dir / "hiv00000.mp4").write_bytes(b"\x00" * 1024)
@@ -214,7 +226,6 @@ def test_process_picture_segments_backup_index01p_fallback(
     _, segments = process_picture_segments(cam_dir)
     assert len(segments) == 1
     assert segments[0].source_file_name == "hiv00000.pic"
-
 
 
 def test_extract_segment_success(
@@ -261,7 +272,7 @@ def test_extract_segment_ffmpeg_failure(
     mock_ffmpeg: None,
     mocker: MockerFixture,
 ) -> None:
-    """If ffmpeg fails (non-zero exit code), it should clean up the output file and return None."""
+    """If ffmpeg fails, it should clean up the output file and return None."""
     _, segments = process_segments(camera_dir)
     segment = segments[0]
 
@@ -353,12 +364,17 @@ def test_process_picture_segments(
 
 
 def test_extract_picture_segment(tmp_path: Path) -> None:
-    """Pictures are extracted by slicing bytes directly and trimming SOI/EOI alignment padding."""
+    """Pictures are extracted by slicing bytes and trimming SOI/EOI padding."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
-    # Raw picture data with 4 leading padding bytes, JPEG payload (FF D8 ... FF D9), and 3 trailing padding bytes
-    raw_payload = b"\x00\x00\x00\x00\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9\x00\x00\x00"
+    # Raw picture data with 4 leading padding bytes, JPEG payload, and 3 trailing bytes
+    lead_pad = b"\x00\x00\x00\x00"
+    jpeg = (
+        b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+    )
+    trail_pad = b"\x00\x00\x00"
+    raw_payload = lead_pad + jpeg + trail_pad
     (cam_dir / "hiv00000.pic").write_bytes(raw_payload)
 
     out_dir = tmp_path / "out"
@@ -388,9 +404,7 @@ def test_extract_picture_segment(tmp_path: Path) -> None:
 
 
 def test_parse_time_filters() -> None:
-    """parse_time_filters should parse valid UTC timestamps and raise ValueError on invalid ones."""
-    import pytest
-
+    """parse_time_filters should parse valid UTC timestamps or raise ValueError."""
     s, e = parse_time_filters(None, None)
     assert s is None and e is None
 
@@ -408,7 +422,7 @@ def test_parse_time_filters() -> None:
 def test_extract_segment_aligns_mpeg_ps_start(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """extract_segment should detect and align to 0x000001 start code within leading padding."""
+    """extract_segment should align to 0x000001 start code within leading padding."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
     out_dir = tmp_path / "out"
@@ -460,7 +474,7 @@ def test_extract_segment_aligns_mpeg_ps_start(
 
 
 def test_parse_time_filters_invalid_range() -> None:
-    """parse_time_filters should raise ValueError when --from is later than or equal to --to."""
+    """parse_time_filters should raise ValueError when --from is >= --to."""
     with pytest.raises(ValueError, match="Invalid time filter range: --from"):
         parse_time_filters("2026-08-01 12:00:00", "2026-07-01 12:00:00")
 
@@ -469,7 +483,7 @@ def test_parse_time_filters_invalid_range() -> None:
 
 
 def test_extract_picture_segment_missing_soi(tmp_path: Path) -> None:
-    """extract_picture_segment should return None when data is not a valid JPEG (no SOI marker)."""
+    """extract_picture_segment returns None when data lacks JPEG SOI marker."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
     out_dir = tmp_path / "out"
@@ -500,7 +514,7 @@ def test_extract_picture_segment_missing_soi(tmp_path: Path) -> None:
 def test_extract_segment_missing_start_code(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """extract_segment should return None without calling FFmpeg if 0x000001 is missing."""
+    """extract_segment returns None without calling FFmpeg if 0x000001 missing."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
     out_dir = tmp_path / "out"
@@ -534,7 +548,7 @@ def test_process_segments_case_insensitive_filename(
     create_valid_index00: Callable[..., Path],
     create_valid_mpeg_ps: Callable[..., Path],
 ) -> None:
-    """process_segments should match container files even if named in uppercase (e.g. HIV00000.MP4)."""
+    """process_segments should match uppercase container files (e.g. HIV00000.MP4)."""
     cam_dir = tmp_path / "camera_caps"
     cam_dir.mkdir()
     index_path = create_valid_index00(num_files=1, num_segments=1)
@@ -546,4 +560,3 @@ def test_process_segments_case_insensitive_filename(
     _, segments = process_segments(cam_dir)
     assert len(segments) == 1
     assert segments[0].source_file_name == "HIV00000.MP4"
-

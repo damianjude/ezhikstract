@@ -36,7 +36,7 @@ MIN_VALID_TIMESTAMP: int = 1577836800  # 2020-01-01 00:00:00 UTC
 
 def _find_mpeg_ps_start_offset(path: Path, offset: int) -> int | None:
     """
-    Peek at up to 2KB at offset and return the exact stream start offset of the MPEG Program Stream
+    Peek at up to 2KB at offset and return stream start offset of MPEG Program Stream
     Start Code (0x000001), or None if invalid or stale.
     """
     try:
@@ -56,7 +56,7 @@ def _find_mpeg_ps_start_offset(path: Path, offset: int) -> int | None:
 
 
 def is_valid_mpeg_ps(path: Path, offset: int) -> bool:
-    """Check if an MPEG Program Stream Start Code (0x000001) exists within 2KB of offset."""
+    """Check if MPEG-PS Start Code (0x000001) exists within 2KB of offset."""
     return _find_mpeg_ps_start_offset(path, offset) is not None
 
 
@@ -76,7 +76,8 @@ def parse_time_filters(
             start_dt = datetime.strptime(from_time, fmt).replace(tzinfo=timezone.utc)
         except ValueError:
             raise ValueError(
-                f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{from_time}'"
+                f"Invalid --from time format. Expected 'YYYY-MM-DD HH:MM:SS', "
+                f"got '{from_time}'"
             )
 
     if to_time:
@@ -84,12 +85,14 @@ def parse_time_filters(
             end_dt = datetime.strptime(to_time, fmt).replace(tzinfo=timezone.utc)
         except ValueError:
             raise ValueError(
-                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', got '{to_time}'"
+                f"Invalid --to time format. Expected 'YYYY-MM-DD HH:MM:SS', "
+                f"got '{to_time}'"
             )
 
     if start_dt and end_dt and start_dt >= end_dt:
         raise ValueError(
-            f"Invalid time filter range: --from ({from_time}) must be earlier than --to ({to_time})"
+            f"Invalid time filter range: --from ({from_time}) must be earlier "
+            f"than --to ({to_time})"
         )
 
     return start_dt, end_dt
@@ -97,7 +100,7 @@ def parse_time_filters(
 
 def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegment]]:
     """
-    Parse index00.bin (or index01.bin backup), map each segment to its source container file,
+    Parse index00.bin (or index01.bin backup), map each segment to its container,
     and return a time-sorted list of valid RecordingSegments.
     """
     index_path = camera_dir / "index00.bin"
@@ -108,9 +111,7 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
     try:
         header, raw_segments = load_index(index_path)
     except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Index file index00.bin not found in '{camera_dir}'."
-        )
+        raise FileNotFoundError(f"Index file index00.bin not found in '{camera_dir}'.")
     except OSError as error:
         raise OSError(f"Failed to read index file '{index_path}': {error}")
 
@@ -128,7 +129,7 @@ def process_segments(camera_dir: Path) -> tuple[IndexHeader, list[RecordingSegme
         if seg.end_time_raw == 0:
             continue
 
-        # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
+        # Filter corrupted records (inverted offsets, timestamps < 2020, start > end)
         if (
             seg.start_offset >= seg.end_offset
             or (seg.start_time_raw & _DATE_MASK) < MIN_VALID_TIMESTAMP
@@ -237,13 +238,13 @@ def extract_segment(
     replace: bool = True,
 ) -> Path | None:
     """
-    Extract one recording segment from its source .mp4 container and remux it into a proper .mp4:
+    Extract one recording segment from source .mp4 container and remux into .mp4:
       - Video: HEVC stream-copied (hvc1 tag for broad compatibility)
-      - Audio: stream-copied directly if compatible (e.g. AAC), with automatic fallback to Opus
+      - Audio: stream-copied directly if compatible (e.g. AAC), fallback to Opus
         transcoding (e.g. PCM G.711) or video-only if audio is missing/invalid.
 
-    The segment data is read directly from disk and piped into ffmpeg for lossless remuxing.
-    Returns the path to the produced .mp4, or None on failure.
+    Segment data is read directly from disk and piped into ffmpeg.
+    Returns path to produced .mp4, or None on failure.
     """
     if not output_dir.exists():
         try:
@@ -285,16 +286,17 @@ def extract_segment(
             seg_data = fh.read(segment.raw.end_offset - segment.raw.start_offset)
     except (OSError, ValueError) as error:
         print(
-            f"Error: Failed to read segment {segment.start_dt} from {source_path}: {error}",
+            f"Error: Failed to read segment {segment.start_dt} from "
+            f"{source_path}: {error}",
             file=sys.stderr,
         )
         return None
 
-    # Align segment start offset past any proprietary header to MPEG-PS start code (0x000001)
+    # Align segment start offset past proprietary header to start code (0x000001)
     pos = seg_data[:2048].find(b"\x00\x00\x01")
     if pos == -1:
         print(
-            f"Warning: Segment {segment.start_dt} does not contain MPEG-PS / HEVC start code.",
+            f"Warning: Segment {segment.start_dt} lacks MPEG-PS / HEVC start code.",
             file=sys.stderr,
         )
         return None
@@ -302,12 +304,12 @@ def extract_segment(
         seg_data = seg_data[pos:]
 
     try:
-        # Attempt 1: MPEG-PS container with stream-copied audio (fastest, lossless for AAC)
+        # Attempt 1: MPEG-PS container with stream-copied audio (lossless for AAC)
         success, stderr1 = _run_ffmpeg_extract(
             seg_data, mp4_file, input_format="mpeg", audio_mode="copy"
         )
 
-        # Attempt 2: MPEG-PS container with audio transcoded to Opus (fallback for PCM/G.711)
+        # Attempt 2: MPEG-PS container with audio transcoded to Opus (for PCM/G.711)
         if not success:
             try:
                 mp4_file.unlink(missing_ok=True)
@@ -375,7 +377,8 @@ def extract_all_segments(
     replace: bool = True,
 ) -> None:
     """
-    Extract all (or a filtered subset of) recording segments, merging each day's output into a single .mp4 in output_dir.
+    Extract recording segments, merging each day's output into a single .mp4
+    in output_dir.
 
     Time filters use "YYYY-MM-DD HH:MM:SS" format (UTC).
     """
@@ -424,7 +427,8 @@ def extract_all_segments(
         for day_key in sorted(by_day):
             day_segs = by_day[day_key]
             progress.console.print(
-                f"[bold green]Processing {day_key} ({len(day_segs)} segments)[/bold green]"
+                f"[bold green]Processing {day_key} "
+                f"({len(day_segs)} segments)[/bold green]"
             )
 
             # Generate target output path for the daily merged video
@@ -461,11 +465,12 @@ def extract_all_segments(
                                 extracted_map[idx] = path
                         except Exception as error:  # noqa: BLE001
                             progress.console.print(
-                                f"[bold red]Error extracting segment {day_segs[idx].start_dt}: {error}[/bold red]",
+                                f"[bold red]Error extracting segment "
+                                f"{day_segs[idx].start_dt}: {error}[/bold red]",
                             )
                         progress.advance(task_id)
 
-                # Ensure extracted segments are sorted chronologically by their original order
+                # Ensure extracted segments are sorted chronologically by original order
                 extracted = [
                     extracted_map[idx]
                     for idx in range(len(day_segs))
@@ -491,7 +496,8 @@ def process_picture_segments(
     camera_dir: Path,
 ) -> tuple[IndexHeader, list[RecordingSegment]]:
     """
-    Parse index00p.bin, validate each segment against its source file, and return a time-sorted list of valid RecordingSegments for pictures.
+    Parse index00p.bin, validate each segment against its source file,
+    and return a time-sorted list of valid RecordingSegments for pictures.
     """
     from .parser import load_picture_index
 
@@ -503,9 +509,7 @@ def process_picture_segments(
     try:
         header, raw_segments = load_picture_index(index_path)
     except FileNotFoundError:
-        raise FileNotFoundError(
-            f"Index file index00p.bin not found in '{camera_dir}'."
-        )
+        raise FileNotFoundError(f"Index file index00p.bin not found in '{camera_dir}'.")
     except OSError as error:
         raise OSError(f"Failed to read index file '{index_path}': {error}")
 
@@ -520,7 +524,7 @@ def process_picture_segments(
         existing_files = {}
 
     for source_file_index, seg in raw_segments:
-        # Filter out corrupted records with inverted offsets, invalid timestamps (< 2020), or start > end
+        # Filter corrupted records (inverted offsets, timestamps < 2020, start > end)
         if (
             seg.start_offset >= seg.end_offset
             or (seg.start_time_raw & _DATE_MASK) < MIN_VALID_TIMESTAMP
@@ -599,7 +603,7 @@ def extract_picture_segment(
         soi_idx = raw.find(b"\xff\xd8")
         if soi_idx == -1:
             print(
-                f"Error: No JPEG SOI marker found in picture segment {segment.start_dt}",
+                f"Error: Missing JPEG SOI in segment {segment.start_dt}",
                 file=sys.stderr,
             )
             return None
@@ -661,7 +665,10 @@ def extract_all_pictures(
             for s in to_process
             if not (
                 output_dir
-                / f"{s.start_dt.strftime('%d%m%Y %H%M%S')} ({s.source_file_index:05d}-{s.raw.start_offset}).jpg"
+                / (
+                    f"{s.start_dt.strftime('%d%m%Y %H%M%S')} "
+                    f"({s.source_file_index:05d}-{s.raw.start_offset}).jpg"
+                )
             ).exists()
         ]
 

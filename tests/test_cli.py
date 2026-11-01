@@ -24,14 +24,14 @@ runner = CliRunner()
 
 
 def test_cli_list_videos_invalid_dir() -> None:
-    """An invalid directory should exit with code 2 gracefully via Typer's built-in checks."""
+    """Invalid directory should exit with code 2 gracefully via Typer checks."""
     result = runner.invoke(app, ["list", "videos", "/does/not/exist"])
     assert result.exit_code != 0
     assert "does not exist" in result.output
 
 
 def test_cli_list_videos_no_index(tmp_path: Path) -> None:
-    """If the directory exists but index00.bin doesn't, it should raise a clear error."""
+    """Missing index00.bin in existing directory should raise clear error."""
     result = runner.invoke(app, ["list", "videos", str(tmp_path)])
     assert result.exit_code == 1
     assert "not found" in result.stderr
@@ -75,7 +75,7 @@ def test_cli_extract_videos(tmp_path: Path, mocker: MockerFixture) -> None:
 
 
 def test_cli_extract_pictures(tmp_path: Path, mocker: MockerFixture) -> None:
-    """Extract pictures command should parse arguments and call the picture extractor."""
+    """Extract pictures command should parse arguments and call extractor."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
@@ -92,7 +92,7 @@ def test_cli_extract_pictures(tmp_path: Path, mocker: MockerFixture) -> None:
 
 
 def test_cli_extract_videos_invalid_time(tmp_path: Path) -> None:
-    """An invalid --from or --to format should fail immediately before processing segments."""
+    """Invalid --from or --to format should fail before processing segments."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
@@ -106,7 +106,7 @@ def test_cli_extract_videos_invalid_time(tmp_path: Path) -> None:
 
 
 def test_cli_extract_pictures_invalid_time(tmp_path: Path) -> None:
-    """An invalid --from or --to format in extract pictures should fail immediately."""
+    """Invalid --from or --to format in extract pictures should fail immediately."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
 
@@ -122,12 +122,10 @@ def test_cli_extract_pictures_invalid_time(tmp_path: Path) -> None:
 def test_cli_list_videos_broken_pipe_exits_cleanly(
     tmp_path: Path, mocker: MockerFixture
 ) -> None:
-    """When stdout is closed downstream (e.g. piped to head), BrokenPipeError exits with 0."""
+    """Downstream closed stdout (e.g. piped to head) should exit with 0."""
     cam_dir = tmp_path / "camera"
     cam_dir.mkdir()
-    mocker.patch(
-        "ezhikstract.extractor.process_segments", return_value=(None, [])
-    )
+    mocker.patch("ezhikstract.extractor.process_segments", return_value=(None, []))
     mocker.patch(
         "ezhikstract.extractor.log_available_recordings",
         side_effect=BrokenPipeError("[Errno 32] Broken pipe"),
@@ -154,4 +152,3 @@ def test_cli_list_pictures_broken_pipe_exits_cleanly(
 
     result = runner.invoke(app, ["list", "pictures", str(cam_dir)])
     assert result.exit_code == 0
-

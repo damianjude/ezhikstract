@@ -122,9 +122,7 @@ def detect_video_segment_record_length(
     rem_len = len(data) - table_offset
     if rem_len <= 0:
         return (
-            SEGMENT_RECORD_LENGTH_96
-            if default_version >= 3
-            else SEGMENT_RECORD_LENGTH
+            SEGMENT_RECORD_LENGTH_96 if default_version >= 3 else SEGMENT_RECORD_LENGTH
         )
 
     scores = {SEGMENT_RECORD_LENGTH_96: 0, SEGMENT_RECORD_LENGTH: 0}
@@ -142,9 +140,7 @@ def detect_video_segment_record_length(
             et = et_raw & 0xFFFFFFFF
             if 0 <= s_off < e_off <= 268435456 and 1577836800 <= st <= et:
                 scores[stride] += 1
-                if stride == 96 and (
-                    b"INFO" in rec[48:80] or b"OFNI" in rec[48:80]
-                ):
+                if stride == 96 and (b"INFO" in rec[48:80] or b"OFNI" in rec[48:80]):
                     scores[stride] += 1
 
         # 2. Check the first slot of subsequent files
@@ -152,9 +148,7 @@ def detect_video_segment_record_length(
             off = table_offset + f_idx * MAX_SEGMENTS_PER_SOURCE_FILE * stride
             if off + stride <= len(data):
                 rec = data[off : off + stride]
-                st_raw, et_raw, s_off, e_off = struct.unpack(
-                    "<8xQQ16xII", rec[:48]
-                )
+                st_raw, et_raw, s_off, e_off = struct.unpack("<8xQQ16xII", rec[:48])
                 st = st_raw & 0xFFFFFFFF
                 et = et_raw & 0xFFFFFFFF
                 if 0 <= s_off < e_off <= 268435456 and 1577836800 <= st <= et:
@@ -173,11 +167,7 @@ def detect_video_segment_record_length(
     if div_80 and not div_96:
         return SEGMENT_RECORD_LENGTH
 
-    return (
-        SEGMENT_RECORD_LENGTH_96
-        if default_version >= 3
-        else SEGMENT_RECORD_LENGTH
-    )
+    return SEGMENT_RECORD_LENGTH_96 if default_version >= 3 else SEGMENT_RECORD_LENGTH
 
 
 def load_index(
@@ -195,7 +185,8 @@ def load_index(
     # Ensure index file is at least large enough to contain the header buffer
     if len(data) < HEADER_BUFFER_LENGTH:
         raise ValueError(
-            f"Index file is too small ({len(data)} bytes). Expected at least {HEADER_BUFFER_LENGTH} bytes."
+            f"Index file is too small ({len(data)} bytes). "
+            f"Expected at least {HEADER_BUFFER_LENGTH} bytes."
         )
 
     header = parse_index_header(data[:HEADER_BUFFER_LENGTH])
@@ -266,7 +257,8 @@ def load_picture_index(
 
     if len(data) < HEADER_BUFFER_LENGTH:
         raise ValueError(
-            f"Index file is too small ({len(data)} bytes). Expected at least {HEADER_BUFFER_LENGTH} bytes."
+            f"Index file is too small ({len(data)} bytes). "
+            f"Expected at least {HEADER_BUFFER_LENGTH} bytes."
         )
 
     header = parse_index_header(data[:HEADER_BUFFER_LENGTH])

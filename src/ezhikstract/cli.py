@@ -8,7 +8,9 @@ import typer
 app = typer.Typer(
     name="ezhikstract",
     help=(
-        "Extract playable video from EZVIZ / Hikvision SD cards' proprietary round-robin storage format. Works specifically for devices that use hiv<xxxxx>.mp4 and index00.bin files."
+        "Extract playable video from EZVIZ / Hikvision SD cards' proprietary "
+        "round-robin storage format. Works specifically for devices that use "
+        "hiv<xxxxx>.mp4 and index00.bin files."
     ),
     no_args_is_help=True,
 )
@@ -102,7 +104,10 @@ def extract_videos(
         typer.Option(
             "--output",
             "-o",
-            help='Output directory for extracted and merged .mp4 files. Default: "./recordings".',
+            help=(
+                "Output directory for extracted and merged .mp4 files. "
+                'Default: "./recordings".'
+            ),
         ),
     ] = Path("./recordings"),
     from_time: Annotated[
@@ -131,7 +136,8 @@ def extract_videos(
 ) -> None:
     """
     Extract video recording segments from an EZVIZ / Hikvision SD card to .mp4 files,
-    merging each day's segments into a single file named by start time (DDMMYYYY HHMMSS.mp4).
+    merging each day's segments into a single file named by start time
+    (DDMMYYYY HHMMSS.mp4).
     """
     from .extractor import extract_all_segments, parse_time_filters, process_segments
 
@@ -242,5 +248,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

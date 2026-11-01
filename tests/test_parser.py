@@ -55,7 +55,7 @@ def test_parse_index_header_property(
     unknown: bytes,
     checksum: int,
 ) -> None:
-    """Property-based test to ensure header parsing handles all valid unsigned int ranges."""
+    """Property test: header parsing handles all valid unsigned int ranges."""
     data = struct.pack(
         "<QIIII1176s76sI",
         modify_counter,
@@ -87,7 +87,7 @@ def test_load_index_too_small(tmp_path: Path, data: bytes) -> None:
 @given(st.binary(min_size=0, max_size=HEADER_BUFFER_LENGTH - 1))
 @settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 def test_load_picture_index_too_small(tmp_path: Path, data: bytes) -> None:
-    """Loading a picture index file smaller than the header buffer should raise ValueError."""
+    """Picture index file smaller than header buffer should raise ValueError."""
     index_path = tmp_path / "index00p.bin"
     index_path.write_bytes(data)
 
@@ -154,7 +154,7 @@ def test_parse_picture_segment_offsets() -> None:
 def test_load_index_corrupt_av_files_avoids_memory_error(
     create_valid_index00: Callable[..., Path], tmp_path: Path
 ) -> None:
-    """An maliciously high av_files value shouldn't crash the loop via out-of-bounds offset reads."""
+    """Very large av_files should not crash loop via out-of-bounds offset reads."""
     index_path = tmp_path / "index00.bin"
     # Create header with av_files = 1,000,000 but small file size
     header = struct.pack(
@@ -169,7 +169,7 @@ def test_load_index_corrupt_av_files_avoids_memory_error(
 
 
 def test_load_picture_index_terminates_on_padding(tmp_path: Path) -> None:
-    """A padding block (\x00\x00\x00\x00) should cleanly terminate parsing of index00p.bin."""
+    """A padding block (\x00\x00\x00\x00) cleanly terminates picture index parsing."""
     index_path = tmp_path / "index00p.bin"
 
     header = struct.pack(
@@ -196,7 +196,7 @@ def test_load_picture_index_terminates_on_padding(tmp_path: Path) -> None:
 def test_load_picture_index_corrupt_offset_prevents_file_index_drift(
     tmp_path: Path,
 ) -> None:
-    """Corrupted segments with inverted offsets should not cause subsequent valid segments to drift in file index."""
+    """Corrupt inverted offsets must not cause subsequent valid segments to drift."""
     index_path = tmp_path / "index00p.bin"
 
     header = struct.pack(
@@ -231,7 +231,7 @@ def test_load_picture_index_corrupt_offset_prevents_file_index_drift(
 
 
 def test_load_index_bounded_by_av_files(tmp_path: Path) -> None:
-    """load_index should not read past av_files * MAX_SEGMENTS_PER_SOURCE_FILE even in huge files."""
+    """load_index should not read past av_files * MAX_SEGMENTS_PER_SOURCE_FILE."""
     from ezhikstract.parser import MAX_SEGMENTS_PER_SOURCE_FILE
 
     index_path = tmp_path / "index00.bin"
@@ -263,12 +263,8 @@ def test_detect_video_segment_record_length_and_parse_96_byte(tmp_path: Path) ->
     )
     file_records = b"\x00" * FILE_RECORD_LENGTH
     time_val = 1784339497
-    seg1 = struct.pack(
-        "<8xQQ16xII48x", time_val, time_val + 40, 0, 1024
-    )
-    seg2 = struct.pack(
-        "<8xQQ16xII48x", time_val + 50, time_val + 90, 1024, 2048
-    )
+    seg1 = struct.pack("<8xQQ16xII48x", time_val, time_val + 40, 0, 1024)
+    seg2 = struct.pack("<8xQQ16xII48x", time_val + 50, time_val + 90, 1024, 2048)
     data = header + file_records + seg1 + seg2
     index_file = tmp_path / "index00.bin"
     index_file.write_bytes(data)
@@ -280,4 +276,3 @@ def test_detect_video_segment_record_length_and_parse_96_byte(tmp_path: Path) ->
     assert segments[0].end_offset == 1024
     assert segments[1].start_offset == 1024
     assert segments[1].end_offset == 2048
-

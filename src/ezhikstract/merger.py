@@ -36,7 +36,7 @@ def merge_day(
         print(f"Error: Failed to delete existing output file {output_path}: {error}")
         return None
 
-    # Fast path: if only one segment exists for the day, copy directly without FFmpeg concat overhead
+    # Fast path: copy single segment directly without FFmpeg concat overhead
     if len(segment_files) == 1:
         try:
             shutil.copyfile(segment_files[0], output_path)
@@ -88,7 +88,7 @@ def merge_day(
             cmd, capture_output=True, text=True, check=True, timeout=300
         )
         if result.stderr:
-            # Avoid printing all standard logs of ffmpeg to avoid noise, but we can print it if there's any actual issue.
+            # Silence standard FFmpeg verbose banner
             pass
         print(f"Merged → {output_path.name}")
         return output_path
